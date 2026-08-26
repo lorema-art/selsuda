@@ -1,0 +1,16 @@
+{
+  "name": "셀러들의 수다",
+  "short_name": "셀수다",
+  "description": "셀러들의 수다 수강생 앱 - 컨설팅·질문·재고·배송요청",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1b2a4a",
+  "theme_color": "#1b2a4a",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
+    { "src": "icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "maskable" }
+  ]
+}

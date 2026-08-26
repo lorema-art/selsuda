@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b2a4a">
+<title>셀러들의 수다</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="셀러들의 수다">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 로그인 -->
+<section id="loginView" class="view">
+  <div class="loginWrap">
+    <img src="icon.png" alt="" class="logo">
+    <h1>셀러들의 수다</h1>
+    <p class="sub">수강생 전용</p>
+    <form id="loginForm" autocomplete="on">
+      <label>전화번호
+        <input id="lgId" type="tel" inputmode="numeric" placeholder="010-0000-0000" autocomplete="username" required>
+      </label>
+      <label>비밀번호
+        <input id="lgPw" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" id="lgBtn">로그인</button>
+      <p id="lgMsg" class="msg"></p>
+    </form>
+    <p class="hint">PC 프로그램과 같은 아이디로 로그인해요.<br>기록·레벨은 서로 이어집니다.</p>
+  </div>
+</section>
+
+<!-- 메인 -->
+<section id="mainView" class="view hidden">
+  <header class="top">
+    <div class="who"><b id="meNick">-</b><span id="meCohort"></span></div>
+    <button class="iconBtn" id="btnLogout" title="로그아웃">⏻</button>
+  </header>
+
+  <main id="pane"></main>
+
+  <nav class="tabbar">
+    <button class="tab on" data-tab="home"><span>🏠</span>홈</button>
+    <button class="tab" data-tab="coach"><span>💎</span>컨설팅</button>
+    <button class="tab" data-tab="ask"><span>💬</span>질문</button>
+    <button class="tab" data-tab="ship"><span>📦</span>재고·배송</button>
+  </nav>
+</section>
+
+<div id="toast" class="toast hidden"></div>
+<div id="sheet" class="sheet hidden"><div class="sheetCard" id="sheetCard"></div></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

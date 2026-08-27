@@ -13,20 +13,38 @@ let session = null;
 let cur = 'home';
 
 // ── 통신 ─────────────────────────────────────────────
-async function call(url, action, extra) {
+// 구글 앱스크립트는 한동안 안 쓰면 잠들어서, 처음 깨울 때 20~30초가 걸린다.
+// 넉넉히 기다리고(60초), 실패하면 한 번 더 시도한다. (두 번째는 깨어 있어서 대부분 빠름)
+const CALL_TIMEOUT = 60000;
+async function call(url, action, extra, _retry) {
   if (!url) throw new Error('연결 주소가 없어요');
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(Object.assign({
-      action,
-      userId: session ? session.userId : '',
-      nickname: session ? session.nickname : '',
-      cohort: session ? session.cohort : '',
-      name: myName()
-    }, extra || {}))
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CALL_TIMEOUT);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({
+        action,
+        userId: session ? session.userId : '',
+        nickname: session ? session.nickname : '',
+        cohort: session ? session.cohort : '',
+        name: myName()
+      }, extra || {}))
+    });
+    return await res.json();
+  } catch (e) {
+    if (!_retry) return call(url, action, extra, true);   // 한 번 더
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+// 앱을 열자마자 두뇌들을 미리 깨워둔다(결과는 안 씀) → 실제로 누를 땐 빠르게 응답
+function warmUp() {
+  ['questionsUrl', 'coachingUrl', 'deliveryUrl', 'apiUrl'].forEach(k => {
+    const u = BRAIN[k];
+    if (u) { try { fetch(u, { method: 'GET', mode: 'no-cors', cache: 'no-store' }).catch(() => {}); } catch (_) {} }
   });
-  return res.json();
 }
 const api = (a, e) => call(BRAIN.apiUrl, a, e);
 const qApi = (a, e) => call(BRAIN.questionsUrl, a, e);
@@ -65,6 +83,7 @@ $('loginForm').addEventListener('submit', async (e) => {
   const msg = (t, k) => { const m = $('lgMsg'); m.textContent = t || ''; m.className = 'msg' + (k ? ' ' + k : ''); };
   if (!/^010-\d{4}-\d{4}$/.test(userId)) { msg('전화번호를 010-0000-0000 형식으로 입력해주세요.', 'err'); return; }
   $('lgBtn').disabled = true; $('lgBtn').textContent = '확인 중…'; msg('');
+  const slow = setTimeout(() => { msg('서버를 깨우는 중이에요. 처음엔 20~30초 걸릴 수 있어요 🙂'); }, 4000);
   try {
     const d = await api('login', { userId, userPw });
     if (d && d.ok) {
@@ -72,7 +91,8 @@ $('loginForm').addEventListener('submit', async (e) => {
       store.set('session', session);
       enterMain();
     } else { msg((d && d.error) || '로그인에 실패했어요.', 'err'); }
-  } catch (_) { msg('연결에 실패했어요. 인터넷을 확인해주세요.', 'err'); }
+  } catch (_) { msg('연결이 오래 걸리고 있어요. 잠시 후 [로그인]을 한 번 더 눌러주세요.', 'err'); }
+  clearTimeout(slow);
   $('lgBtn').disabled = false; $('lgBtn').textContent = '로그인';
 });
 
@@ -99,7 +119,9 @@ function go(tab) {
   ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip }[tab] || viewHome)();
 }
 window.go = go;
-const loading = (t) => { $('pane').innerHTML = `<div class="spin">${t || '불러오는 중…'}</div>`; };
+const loading = (t) => {
+  $('pane').innerHTML = `<div class="spin">${t || '불러오는 중…'}<br><span style="font-size:12px">처음엔 조금 오래 걸릴 수 있어요</span></div>`;
+};
 
 // ── 홈 ───────────────────────────────────────────────
 async function viewHome() {
@@ -345,29 +367,59 @@ function renderShip() {
 }
 window.dlTab = (t) => { DL.tab = t; renderShip(); };
 
+// 재고 검색 — 띄어쓰기·대소문자 무시. 현재 재고와 입출고 내역을 한 번에 거른다.
+const invNorm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
+const invKey = function () { return esc(invNorm(Array.prototype.join.call(arguments, ' '))); };
+window.invFilter = function () {
+  const box = $('invQ'); if (!box) return;
+  const q = invNorm(box.value);
+  let n1 = 0, n2 = 0;
+  document.querySelectorAll('#invRows tr[data-s]').forEach(tr => {
+    const hit = !q || tr.dataset.s.indexOf(q) >= 0;
+    tr.style.display = hit ? '' : 'none'; if (hit) n1++;
+  });
+  document.querySelectorAll('#invHist [data-s]').forEach(el => {
+    const hit = !q || el.dataset.s.indexOf(q) >= 0;
+    el.style.display = hit ? '' : 'none'; if (hit) n2++;
+  });
+  const e1 = $('invNone1'); if (e1) e1.style.display = (q && !n1) ? '' : 'none';
+  const e2 = $('invNone2'); if (e2) e2.style.display = (q && !n2) ? '' : 'none';
+  const c = $('invCnt'); if (c) c.textContent = q ? `재고 ${n1}건 · 내역 ${n2}건` : '';
+  const x = $('invClr'); if (x) x.style.display = q ? '' : 'none';
+};
+window.invClear = function () { const b = $('invQ'); if (b) { b.value = ''; b.focus(); } invFilter(); };
 function paneInv() {
-  let h = `<div class="sec">📦 현재 재고</div>`;
+  let h = '';
+  if (DL.inv.length || (DL.hist || []).length) {
+    h += `<div class="invSrch">
+        <input id="invQ" type="search" inputmode="search" placeholder="🔍 상품·옵션·메모 검색" oninput="invFilter()">
+        <div class="invSrchInfo"><span id="invCnt" class="muted"></span>
+          <button type="button" id="invClr" class="btn mini ghost" style="display:none" onclick="invClear()">✕ 지우기</button></div>
+      </div>`;
+  }
+  h += `<div class="sec">📦 현재 재고</div>`;
   h += DL.inv.length
     ? `<div class="card" style="padding:6px 12px"><table class="tbl">
-        <thead><tr><th>상품</th><th style="text-align:right">수량</th></tr></thead><tbody>` +
+        <thead><tr><th>상품</th><th style="text-align:right">수량</th></tr></thead><tbody id="invRows">` +
       DL.inv.map(it => {
         const p = packOf(it.product);
-        return `<tr><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
+        return `<tr data-s="${invKey(it.product, it.option, it.price, it.expiry)}"><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
           ${it.option ? `<div class="muted" style="font-size:11.5px">${esc(it.option)}</div>` : ''}</td>
           <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}</td></tr>`;
-      }).join('') + `</tbody></table></div>`
+      }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
+      + `</tbody></table></div>`
     : `<div class="empty">아직 등록된 재고가 없어요.<br>입고 등록은 PC 프로그램에서 할 수 있어요.</div>`;
   const hist = (DL.hist || []).slice(0, 15);
   if (hist.length) {
-    h += `<div class="sec">🧾 최근 입출고</div>` + hist.map(x => {
+    h += `<div class="sec">🧾 최근 입출고</div><div id="invHist">` + hist.map(x => {
       const out = String(x.gubun || '').indexOf('출') >= 0;
       const ret = String(x.gubun || '').indexOf('반품') >= 0;
       const pk = Number(x.pack) || packOf(x.product), pks = Number(x.packs) || 0;
-      return `<div class="item"><div class="h">
+      return `<div class="item" data-s="${invKey(x.product, x.option, x.gubun, x.memo, x.site, x.price, x.expiry, x.at)}"><div class="h">
           <span class="t">${esc(plainName(x.product))}</span>
           <span class="pill ${ret ? 'ret' : (out ? 'wait' : 'done')}">${esc(x.gubun || '')} ${ret ? '' : (out ? '-' : '+')}${x.qty}</span>
         </div><div class="m">${esc(fmtDT(x.at))}${pk > 1 && pks ? ` · 📦 ${pk}개입 × ${pks} = ${pk * pks}개` : ''}</div></div>`;
-    }).join('');
+    }).join('') + `<div id="invNone2" class="empty" style="display:none">검색과 일치하는 내역이 없어요.</div></div>`;
   }
   return h;
 }
@@ -531,6 +583,7 @@ function installRowHtml() {
 
 // ── 시작 ─────────────────────────────────────────────
 (function boot() {
+  warmUp();                       // 두뇌 미리 깨우기
   const s = store.get('session', null);
   if (s && s.userId) { session = s; enterMain(); }
   if ('serviceWorker' in navigator) {

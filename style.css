@@ -149,3 +149,10 @@ textarea{resize:vertical;min-height:84px}
 .guide li{margin-bottom:4px}
 .key{display:inline-block;padding:2px 9px;border-radius:7px;background:var(--bloom-soft2);
   border:1px solid var(--bloom-soft);color:var(--bloom-deep);font-weight:800;font-size:13px}
+
+/* ── 재고 검색 ── */
+.invSrch{margin:2px 0 4px}
+.invSrch input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;font-size:16px}
+.invSrchInfo{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;margin-top:6px}
+.invSrchInfo .muted{font-size:12px}
+.invSrchInfo .btn.mini{padding:5px 12px;font-size:11.5px}

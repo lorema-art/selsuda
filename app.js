@@ -63,8 +63,12 @@ function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add('hidden'), 2400);
 }
-function sheet(html) { $('sheetCard').innerHTML = html; $('sheet').classList.remove('hidden'); }
-function closeSheet() { $('sheet').classList.add('hidden'); }
+let _sheetLocked = false;                 // true면 배경을 눌러도 안 닫힘(확인 버튼만)
+function sheet(html, lock) { $('sheetCard').innerHTML = html; _sheetLocked = !!lock; $('sheet').classList.remove('hidden'); }
+function closeSheet(force) {
+  if (_sheetLocked && !force) return;      // 잠긴 팝업은 확인 눌러야 닫힘
+  _sheetLocked = false; $('sheet').classList.add('hidden');
+}
 window.closeSheet = closeSheet;
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
@@ -108,6 +112,7 @@ function enterMain() {
   $('mainView').classList.remove('hidden');
   go('home');
   try { showInstallBar(); } catch (_) {}
+  setTimeout(() => { try { checkLogisticsMessages(); } catch (_) {} }, 1200);
 }
 
 // ── 탭 ───────────────────────────────────────────────
@@ -116,7 +121,7 @@ function go(tab) {
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, margin: viewMargin }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -137,6 +142,7 @@ async function viewHome() {
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
       <button onclick="go('ship')"><i>📦</i>재고·배송</button>
+      <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
     </div>`;
   if (notice.length) {
@@ -164,13 +170,27 @@ async function viewHome() {
 window.openRecharge = () => { if (BRAIN.rechargeUrl) window.open(BRAIN.rechargeUrl, '_blank', 'noopener'); };
 
 // ── 컨설팅 ───────────────────────────────────────────
-let CO = { sections: [], slotRoles: {}, pick: null, topic: null };
+let CO = { sections: [], slotRoles: {}, pick: null, topic: null, weekQuota: 1, myWeeks: {} };
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 function dayLabel(d) {
   const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return esc(d);
   const w = DOW[new Date(d + 'T00:00:00').getDay()] || '';
   return `${Number(m[2])}월 ${Number(m[3])}일 (${w})`;
+}
+// 그 날짜가 속한 주의 월요일
+function monOf(dateStr) {
+  const s = String(dateStr || '');
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T00:00:00') : null;
+  if (!d || isNaN(d)) return '';
+  const wd = d.getDay();
+  d.setDate(d.getDate() + (wd === 0 ? -6 : 1 - wd));
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function weekFull(dateStr) {
+  if (!(CO.weekQuota > 0)) return false;
+  return (CO.myWeeks[monOf(dateStr)] || 0) >= CO.weekQuota;
 }
 function freeForOwner(date, time, owner) {
   const r = CO.slotRoles[date + ' ' + time];
@@ -187,6 +207,10 @@ async function viewCoach() {
   if (!d || !d.ok) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.</div>`; return; }
   CO.sections = d.sections || []; CO.slotRoles = {};
   const mine = d.myBookings || [];
+  // 주당 신청 제한 — 이미 신청한 주는 미리 회색으로
+  CO.weekQuota = Number(d.weekQuota != null ? d.weekQuota : 1);
+  CO.myWeeks = {};
+  mine.forEach(b => { const mo = monOf(b.date); if (mo) CO.myWeeks[mo] = (CO.myWeeks[mo] || 0) + 1; });
   let h = `<div class="card bal"><span>남은 신청 횟수</span><b>${d.remaining}회</b></div>`;
   if (mine.length) {
     h += `<div class="sec">📌 내가 신청한 자리</div>` + mine.map(b => `
@@ -206,10 +230,13 @@ async function viewCoach() {
     body += `<div class="coDay"><div class="coDayHd">${dayLabel(day.date)}</div><div class="chips">` +
       slots.map(s => s.state === 'mine'
         ? `<span class="chip mine">${esc(s.time)} ✓</span>`
-        : `<button class="chip" onclick="coApply('${day.date}','${s.time}')">${esc(s.time)}${Number(s.free) > 1 ? `<span class="seat">${s.free}</span>` : ''}</button>`
+        : (weekFull(day.date)
+            ? `<span class="chip full">${esc(s.time)}</span>`
+            : `<button class="chip" onclick="coApply('${day.date}','${s.time}')">${esc(s.time)}${Number(s.free) > 1 ? `<span class="seat">${s.free}</span>` : ''}</button>`)
       ).join('') + `</div></div>`;
   }));
   h += `<div class="sec">🗓️ 신청 가능한 자리</div>`;
+  if (CO.weekQuota > 0) h += `<p class="muted" style="margin:0 2px 8px;font-size:12.5px">컨설팅은 <b>일주일에 ${CO.weekQuota}번</b>까지 신청할 수 있어요. 이미 신청한 주는 회색으로 보여요.</p>`;
   h += any ? body : `<div class="empty">지금 열린 자리가 없어요.<br>자리가 열리면 여기에 표시됩니다.${d.leadDays ? `<br><span class="muted">(당일 신청은 받지 않아요)</span>` : ''}</div>`;
   $('pane').innerHTML = h;
 }
@@ -288,10 +315,31 @@ window.coCancel = async function (date, time) {
 };
 
 // ── 질문 ─────────────────────────────────────────────
+// 질문 시각 → 정렬용 숫자 + 보기 좋은 글자.
+//  시트가 시각을 날짜값으로 저장하면 'Wed Jul 08 2026 …' 로 오는데,
+//  그대로 정렬하면 요일 이름 알파벳순으로 섞인다. 두 형식 모두 알아듣게 한다.
+function qTime(v) {
+  const s = String(v == null ? '' : v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  const t = Date.parse(s);                       // 'Wed Jul 08 2026 …' 형식
+  return isNaN(t) ? 0 : t;
+}
+function qDateLabel(v) {
+  const t = qTime(v);
+  if (!t) return String(v || '').slice(0, 16);
+  const d = new Date(t), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+let QH = [];
+const qNorm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
 async function viewAsk() {
   loading();
   let items = [];
-  try { const d = await qApi('getMyHistory', { limit: 30 }); if (d && d.ok) items = d.items || []; } catch (_) {}
+  try { const d = await qApi('getMyHistory'); if (d && d.ok) items = d.items || []; } catch (_) {}
+  // 최신순 보장 (서버가 옛 버전이어도 화면은 항상 최신순)
+  items = items.slice().sort((a, b) => qTime(b.when || b.date) - qTime(a.when || a.date));
+  QH = items;
   let h = `<div class="card">
       <label class="lbl">궁금한 점을 남겨주세요</label>
       <textarea id="qText" placeholder="예) 상세페이지 구성이 막막해요"></textarea>
@@ -299,17 +347,38 @@ async function viewAsk() {
       <p class="muted" style="font-size:12px;margin:10px 0 0">답변이 달리면 이 화면에 표시돼요.<br>화면 캡쳐 첨부는 PC 프로그램에서 할 수 있어요.</p>
     </div>`;
   h += `<div class="sec">📜 내 질문 내역</div>`;
+  if (items.length) {
+    h += `<div class="invSrch">
+        <input id="qQ" type="search" inputmode="search" placeholder="🔍 질문·답변 내용 검색" oninput="qFilter()">
+        <div class="invSrchInfo"><span id="qCnt" class="muted"></span>
+          <button type="button" id="qClr" class="btn mini ghost" style="display:none" onclick="qClear()">✕ 지우기</button></div>
+      </div><div id="qList">`;
+  }
   h += items.length ? items.map(q => {
     const answered = !!(q.answer || '').trim();
-    return `<div class="item">
-      <div class="h"><span class="t">${esc((q.date || '').slice(0, 16))}</span>
+    return `<div class="item" data-s="${esc(qNorm((q.question || '') + ' ' + (q.answer || '') + ' ' + qDateLabel(q.date)))}">
+      <div class="h"><span class="t">${esc(qDateLabel(q.date))}</span>
         <span class="pill ${answered ? 'done' : 'wait'}">${answered ? '답변완료' : '대기중'}</span></div>
       <div class="qa">${nl2br(q.question || '')}</div>
       ${answered ? `<div class="qa" style="background:var(--bloom-soft2)"><b>답변</b><br>${nl2br(q.answer)}</div>` : ''}
     </div>`;
-  }).join('') : `<div class="empty">아직 질문이 없어요.</div>`;
+  }).join('') + `<div id="qNone" class="empty" style="display:none">검색과 일치하는 질문이 없어요.</div></div>`
+    : `<div class="empty">아직 질문이 없어요.</div>`;
   $('pane').innerHTML = h;
 }
+window.qFilter = function () {
+  const box = $('qQ'); if (!box) return;
+  const q = qNorm(box.value);
+  let n = 0;
+  document.querySelectorAll('#qList .item[data-s]').forEach(el => {
+    const hit = !q || el.dataset.s.indexOf(q) >= 0;
+    el.style.display = hit ? '' : 'none'; if (hit) n++;
+  });
+  const none = $('qNone'); if (none) none.style.display = (q && !n) ? '' : 'none';
+  const c = $('qCnt'); if (c) c.textContent = q ? `${n}건 / 전체 ${QH.length}건` : `전체 ${QH.length}건`;
+  const x = $('qClr'); if (x) x.style.display = q ? '' : 'none';
+};
+window.qClear = function () { const b = $('qQ'); if (b) { b.value = ''; b.focus(); } qFilter(); };
 window.askSend = async function () {
   const btn = $('qBtn'), text = ($('qText').value || '').trim();
   if (!text) { alert('질문 내용을 입력해주세요.'); return; }
@@ -327,7 +396,7 @@ window.askSend = async function () {
 };
 
 // ── 재고 · 배송요청 ──────────────────────────────────
-let DL = { inv: [], ship: [], bal: null, tab: 'inv' };
+let DL = { inv: [], ship: [], bal: null, tab: 'inv', shipTab: 'all' };
 const plainName = (n) => String(n || '').replace(/[\s,·]*\d+\s*개입?\s*$/, '').trim() || String(n || '');
 const packOf = (n) => { const m = String(n || '').match(/(\d+)\s*개입?\s*$/); return m ? Math.max(1, Number(m[1])) : 1; };
 const fmtDT = (s) => String(s || '').replace('T', ' ').slice(0, 16);
@@ -364,6 +433,7 @@ function renderShip() {
     </div>`;
   h += DL.tab === 'inv' ? paneInv() : paneShip();
   $('pane').innerHTML = h;
+  if (DL.tab === 'ship') { try { dlInfo(); } catch (_) {} }
 }
 window.dlTab = (t) => { DL.tab = t; renderShip(); };
 
@@ -405,7 +475,7 @@ function paneInv() {
         const p = packOf(it.product);
         return `<tr data-s="${invKey(it.product, it.option, it.price, it.expiry)}"><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
           ${it.option ? `<div class="muted" style="font-size:11.5px">${esc(it.option)}</div>` : ''}</td>
-          <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}</td></tr>`;
+          <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}</td></tr>`;
       }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
       + `</tbody></table></div>`
     : `<div class="empty">아직 등록된 재고가 없어요.<br>입고 등록은 PC 프로그램에서 할 수 있어요.</div>`;
@@ -430,10 +500,11 @@ function paneShip() {
   if (inStock.length) {
     h += `<div class="card">
       <label class="lbl">보낼 상품 (재고 있는 것만)</label>
-      <select id="dlProd">${inStock.map(x => {
+      <select id="dlProd" onchange="dlInfo()">${inStock.map(x => {
         const p = packOf(x.it.product);
         return `<option value="${x.i}">${esc(plainName(x.it.product))}${p > 1 ? ` [${p}개입]` : ''}${x.it.option ? ' · ' + esc(x.it.option) : ''} (재고 ${x.it.qty}개)</option>`;
       }).join('')}</select>
+      <div id="dlInfoBox"></div>
       <label class="lbl">수량</label><input id="dlQty" type="number" min="1" value="1">
       <label class="lbl">받는사람</label><input id="dlRcv" type="text" placeholder="예) 홍길동">
       <label class="lbl">연락처</label><input id="dlPh" type="tel" inputmode="numeric" placeholder="010-0000-0000">
@@ -444,8 +515,26 @@ function paneShip() {
   } else {
     h += `<div class="empty">배송요청할 수 있는 재고가 없어요.</div>`;
   }
-  h += `<div class="sec">📋 내 배송요청 <span class="muted" style="font-weight:400">(${DL.ship.length}건)</span></div>`;
-  h += DL.ship.length ? DL.ship.map(s => {
+  h += `<div class="sec">📋 내 배송요청</div>`;
+  if (DL.ship.length) {
+    const cnt = (st) => DL.ship.filter(s => {
+      const x = String(s.status || '');
+      return st === 'wait' ? x.indexOf('접수') >= 0
+           : st === 'done' ? x.indexOf('발송') >= 0
+           : st === 'return' ? x.indexOf('반품') >= 0 : true;
+    }).length;
+    h += `<div class="chips shipChips">
+      ${[['all','전체'],['wait','접수'],['done','발송완료'],['return','반품']].map(([k, t]) =>
+        `<button type="button" class="chip ${DL.shipTab === k ? 'on' : ''}" onclick="dlShipTab('${k}')">${t}<span class="cnt">${cnt(k)}</span></button>`).join('')}
+    </div>`;
+  }
+  const shown = DL.ship.filter(s => {
+    const x = String(s.status || ''), st = DL.shipTab || 'all';
+    return st === 'wait' ? x.indexOf('접수') >= 0
+         : st === 'done' ? x.indexOf('발송') >= 0
+         : st === 'return' ? x.indexOf('반품') >= 0 : true;
+  });
+  h += shown.length ? shown.map(s => {
     const st = String(s.status || '');
     const k = st.indexOf('발송완료') >= 0 ? 'done' : (st.indexOf('반품') >= 0 ? 'ret' : 'wait');
     return `<div class="item">
@@ -455,10 +544,29 @@ function paneShip() {
         ${s.invoice ? `<br>송장 ${esc(s.invoice)} ${esc(s.courier || '')}` : ''}</div>
       ${st.indexOf('접수') >= 0 ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>` : ''}
     </div>`;
-  }).join('') : `<div class="empty">아직 배송요청이 없어요.</div>`;
+  }).join('') : `<div class="empty">${DL.ship.length ? '조건에 맞는 배송요청이 없어요.' : '아직 배송요청이 없어요.'}</div>`;
+  if (DL.ship.length) h += `<p class="muted" style="margin:8px 2px 0;font-size:12px">${shown.length}건 표시 중 (전체 ${DL.ship.length}건)</p>`;
   return h;
 }
+window.dlShipTab = (k) => { DL.shipTab = k; renderShip(); };
 
+// 선택한 상품의 구매처·구매가격·입고메모 표시
+window.dlInfo = function () {
+  const box = $('dlInfoBox'); if (!box) return;
+  const sel = $('dlProd'); if (!sel) { box.innerHTML = ''; return; }
+  const it = DL.inv[Number(sel.value)];
+  if (!it) { box.innerHTML = ''; return; }
+  const rows = [];
+  if (it.price) rows.push(['💰 구매가격', esc(String(it.price)) + '원']);
+  if (it.site)  rows.push(['🔗 구매처', /^https?:\\//i.test(it.site)
+      ? `<a href="${esc(it.site)}" target="_blank" rel="noopener">${esc(it.site)}</a>`
+      : esc(it.site)]);
+  if (it.memo)  rows.push(['📝 입고메모', esc(it.memo)]);
+  if (it.expiry) rows.push(['📅 유통기한', esc(it.expiry)]);
+  box.innerHTML = rows.length
+    ? `<div class="infoBox">${rows.map(r => `<div><b>${r[0]}</b><span>${r[1]}</span></div>`).join('')}</div>`
+    : `<div class="infoBox muted">구매처·가격·메모가 입력되지 않은 상품이에요.</div>`;
+};
 window.dlSend = async function () {
   const btn = $('dlBtn'); if (btn.disabled) return;
   const it = DL.inv[Number($('dlProd').value)];
@@ -580,6 +688,161 @@ function installRowHtml() {
       <button class="btn mini" onclick="doInstall()">설치</button>
     </div>`;
 }
+
+
+// ── 물류담당자 메시지: 확인 눌러야 닫히는 팝업 ──────────
+let MSG = { queue: [], showing: false };
+const msgAck = () => store.get('dlMsgAck', {}) || {};
+const msgAckSave = (m) => store.set('dlMsgAck', m);
+
+async function checkLogisticsMessages() {
+  if (!session || !BRAIN.deliveryUrl) return;
+  let d;
+  try { d = await dlApi('getDeliveryAlerts'); } catch (_) { return; }
+  if (!d || !d.ok) return;
+  const list = d.inquiries || [];
+  const ack = msgAck();
+  if (!store.get('dlMsgInit', false)) {          // 처음 켠 기기: 기존 메시지는 읽음 처리
+    list.forEach(q => { const t = String(q.reply || '').trim(); if (t) ack[q.at] = t; });
+    msgAckSave(ack); store.set('dlMsgInit', true);
+    return;
+  }
+  list.forEach(q => {
+    const t = String(q.reply || '').trim();
+    if (t && ack[q.at] !== t && !MSG.queue.some(x => x.at === q.at)) MSG.queue.push(q);
+  });
+  showNextMsg();
+}
+
+function showNextMsg() {
+  if (MSG.showing || !MSG.queue.length) return;
+  const q = MSG.queue[0];
+  MSG.showing = true;
+  const more = MSG.queue.length > 1 ? `<p class="muted" style="margin-top:10px">읽지 않은 메시지가 ${MSG.queue.length - 1}개 더 있어요.</p>` : '';
+  sheet(`<h3>💬 물류담당자 메시지</h3>
+    <div class="msgBox">${nl2br(q.reply || '')}</div>${more}
+    <div class="row"><button class="btn" onclick="ackMsg()">확인했어요</button></div>`, true);
+}
+window.ackMsg = function () {
+  const q = MSG.queue.shift();
+  if (q) { const m = msgAck(); m[q.at] = String(q.reply || '').trim(); msgAckSave(m); }
+  MSG.showing = false;
+  closeSheet(true);
+  if (MSG.queue.length) setTimeout(showNextMsg, 250);
+};
+
+// ══════════ 💰 마진 계산기 ══════════
+//  판매가에서 매입가·택배비·수수료·부가세를 빼고 실제로 남는 돈을 계산한다.
+//  · 판매가·매입가는 '부가세 포함 금액'(우리가 실제로 주고받는 돈) 기준.
+//  · 납부 부가세 = (판매가 − 매입가) ÷ 11   ← 매출세액 − 매입세액
+//    간이·면세 사업자는 [부가세 계산] 을 끄면 이 항목이 빠진다.
+function marginCalc(inp) {
+  const price = Math.max(0, Number(inp.price) || 0);      // 판매가(고객이 내는 돈)
+  const cost  = Math.max(0, Number(inp.cost) || 0);       // 매입가
+  const ship  = Math.max(0, Number(inp.ship) || 0);       // 택배비
+  const etc   = Math.max(0, Number(inp.etc) || 0);        // 포장·부자재 등
+  const feeR  = Math.max(0, Number(inp.feeRate) || 0) / 100;  // 수수료율
+  const vatOn = !!inp.vat;
+
+  const fee = Math.round(price * feeR);                   // 결제·판매 수수료
+  const vat = vatOn ? Math.max(0, Math.round((price - cost) / 11)) : 0;  // 납부 부가세
+  const profit = price - cost - ship - fee - etc - vat;   // 순이익
+  const rate = price > 0 ? (profit / price) * 100 : 0;    // 마진율(판매가 대비)
+  const roi  = cost > 0 ? (profit / cost) * 100 : 0;      // 원가 대비 수익률
+  return { price, cost, ship, etc, fee, vat, profit, rate, roi };
+}
+
+// 목표 마진율(%)을 맞추려면 얼마에 팔아야 하나 → 권장 판매가
+//   순이익 = P(1 − 수수료율 − vat계수) − 매입가(1 − vat계수) − 택배비 − 기타 = P × 목표율
+function marginTargetPrice(inp, targetRate) {
+  const cost = Math.max(0, Number(inp.cost) || 0);
+  const ship = Math.max(0, Number(inp.ship) || 0);
+  const etc  = Math.max(0, Number(inp.etc) || 0);
+  const feeR = Math.max(0, Number(inp.feeRate) || 0) / 100;
+  const m    = (Number(targetRate) || 0) / 100;
+  const k    = inp.vat ? 1 / 11 : 0;                      // 부가세 계수
+  const den  = 1 - feeR - k - m;                          // 분모
+  if (den <= 0) return null;                              // 수수료+세금+목표가 100% 이상 → 불가능
+  const p = (cost * (1 - k) + ship + etc) / den;
+  return Math.ceil(p / 10) * 10;                          // 10원 단위 올림
+}
+const wonFmt = (n) => (Math.round(Number(n) || 0)).toLocaleString('ko-KR');
+
+function mgPrefs() { return store.get('marginPrefs', { ship: 3000, feeRate: 6, vat: true }); }
+let MG = { inv: [] };
+async function viewMargin() {
+  const p = mgPrefs();
+  let inv = [];
+  try { const d = await dlApi('getInventory'); inv = ((d && d.items) || []).filter(x => x.price); } catch (_) {}
+  MG.inv = inv;
+  $('pane').innerHTML = `
+    <div class="sec">💰 마진 계산기</div>
+    <div class="card">
+      <p class="muted" style="margin:0 0 4px;font-size:12.5px">판매가에서 매입가·택배비·수수료·부가세를 뺀 <b>실제 남는 돈</b>이에요.</p>
+      ${inv.length ? `<label class="lbl">내 재고에서 매입가 불러오기</label>
+        <select id="mgPick" onchange="mgFromStock()"><option value="">— 직접 입력 —</option>
+        ${inv.map((x, i) => `<option value="${i}">${esc(plainName(x.product))} — ${wonFmt(x.price)}원</option>`).join('')}</select>` : ''}
+      <label class="lbl">판매가 (원)</label><input id="mgPrice" type="text" inputmode="numeric" placeholder="19900" oninput="mgRun()">
+      <label class="lbl">매입가 (원)</label><input id="mgCost" type="text" inputmode="numeric" placeholder="8000" oninput="mgRun()">
+      <label class="lbl">택배비 (원)</label><input id="mgShip" type="text" inputmode="numeric" value="${p.ship}" oninput="mgRun()">
+      <label class="lbl">수수료 (%)</label><input id="mgFee" type="text" inputmode="decimal" value="${p.feeRate}" oninput="mgRun()">
+      <label class="lbl">기타비용 (원)</label><input id="mgEtc" type="text" inputmode="numeric" placeholder="포장·부자재" oninput="mgRun()">
+      <label class="mgChk"><input type="checkbox" id="mgVat" ${p.vat ? 'checked' : ''} onchange="mgRun()"> 부가세 계산에 넣기</label>
+    </div>
+    <div id="mgOut"></div>
+    <div class="sec">🎯 목표 마진율로 판매가 계산</div>
+    <div class="mgTargets">${[10,15,20,25,30,40].map(t => `<button type="button" class="mgT" onclick="mgTarget(${t})">${t}%</button>`).join('')}</div>
+    <div id="mgTargetOut"></div>
+    <div class="card muted" style="font-size:11.5px;line-height:1.8;margin-top:12px">
+      · 수수료는 결제수수료 + 매출연동수수료 합계예요. 스마트스토어는 보통 <b>6% 안팎</b>이에요.<br>
+      · 부가세는 (판매가 − 매입가) ÷ 11 로 계산해요. 간이·면세 사업자는 체크를 꺼주세요.
+    </div>`;
+  mgRun();
+}
+window.mgFromStock = function () {
+  const it = MG.inv[Number(($('mgPick') || {}).value)];
+  if (!it) return;
+  const c = $('mgCost'); if (c) c.value = String(it.price).replace(/[^0-9]/g, '');
+  mgRun();
+};
+function mgNum(id) { const el = $(id); return el ? Number(String(el.value).replace(/[^0-9.]/g, '')) || 0 : 0; }
+function mgInput() {
+  return { price: mgNum('mgPrice'), cost: mgNum('mgCost'), ship: mgNum('mgShip'),
+           etc: mgNum('mgEtc'), feeRate: mgNum('mgFee'), vat: !!($('mgVat') || {}).checked };
+}
+window.mgRun = function () {
+  const inp = mgInput();
+  store.set('marginPrefs', { ship: inp.ship, feeRate: inp.feeRate, vat: inp.vat });
+  const box = $('mgOut'); if (!box) return;
+  if (!inp.price) { box.innerHTML = `<div class="mgHint">판매가를 넣으면 바로 계산돼요.</div>`; return; }
+  const r = marginCalc(inp), good = r.profit > 0;
+  box.innerHTML = `
+    <div class="mgResult ${good ? '' : 'bad'}">
+      <div class="mgBig"><span>순이익</span><b>${wonFmt(r.profit)}원</b></div>
+      <div class="mgRate">마진율 <b>${r.rate.toFixed(1)}%</b><span class="muted"> · 원가대비 ${r.roi.toFixed(1)}%</span></div>
+      ${good ? '' : `<div class="mgWarn">⚠️ 팔수록 손해예요. 판매가를 올리거나 매입가를 낮춰야 해요.</div>`}
+    </div>
+    <div class="mgRows">
+      <div><span>판매가</span><b>${wonFmt(r.price)}원</b></div>
+      <div><span>− 매입가</span><b>${wonFmt(r.cost)}원</b></div>
+      <div><span>− 택배비</span><b>${wonFmt(r.ship)}원</b></div>
+      <div><span>− 수수료 (${inp.feeRate}%)</span><b>${wonFmt(r.fee)}원</b></div>
+      ${r.etc ? `<div><span>− 기타비용</span><b>${wonFmt(r.etc)}원</b></div>` : ''}
+      ${inp.vat ? `<div><span>− 납부 부가세</span><b>${wonFmt(r.vat)}원</b></div>` : ''}
+      <div class="tot"><span>= 남는 돈</span><b>${wonFmt(r.profit)}원</b></div>
+    </div>`;
+};
+window.mgTarget = function (t) {
+  const inp = mgInput(), box = $('mgTargetOut'); if (!box) return;
+  if (!inp.cost) { box.innerHTML = `<div class="mgHint">매입가를 먼저 넣어주세요.</div>`; return; }
+  const p = marginTargetPrice(inp, t);
+  if (!p) { box.innerHTML = `<div class="mgHint">수수료·세금이 너무 커서 그 마진율은 나올 수 없어요.</div>`; return; }
+  const chk = marginCalc(Object.assign({}, inp, { price: p }));
+  box.innerHTML = `<div class="mgTargetBox">마진율 <b>${t}%</b> 를 남기려면 → <b class="mgP">${wonFmt(p)}원</b> 에 파세요
+      <div class="muted" style="margin-top:5px">그때 남는 돈 ${wonFmt(chk.profit)}원</div>
+      <button type="button" class="btn mini ghost" style="margin-top:8px" onclick="mgApply(${p})">이 가격으로 계산</button></div>`;
+};
+window.mgApply = function (p) { const el = $('mgPrice'); if (el) { el.value = p; mgRun(); } };
 
 // ── 시작 ─────────────────────────────────────────────
 (function boot() {

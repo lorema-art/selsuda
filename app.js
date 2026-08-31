@@ -48,7 +48,23 @@ function warmUp() {
 }
 const api = (a, e) => call(BRAIN.apiUrl, a, e);
 const qApi = (a, e) => call(BRAIN.questionsUrl, a, e);
-const coApi = (a, e) => call(BRAIN.coachingUrl, a, e);
+// 컨설팅은 기수마다 담당 강사 시트가 다르다.
+//  ⚠ 예전에는 기수와 무관하게 BRAIN.coachingUrl(= 뷰셀 시트) 하나만 불러서,
+//    다른 기수 학생도 뷰셀 코치 자리를 예약할 수 있었다. 이제 기수로 갈라 부른다.
+// 기수 이름 비교용 키 — 공백·괄호 무시 ('뷰셀 1기' == '뷰셀1기'). PC·서버와 같은 규칙.
+function cohortKey(s) { return String(s == null ? '' : s).replace(/[\s()（）]/g, '').toLowerCase(); }
+function coachingUrlFor(cohort) {
+  const k = cohortKey(cohort);
+  if (!k) return '';
+  const list = (window.COACHING || []);
+  for (const ins of list) if ((ins.cohorts || []).some(c => cohortKey(c) === k)) return ins.url || '';
+  return '';                                  // 목록에 없는 기수 = 연결 안 함
+}
+const coApi = (a, e) => {
+  const url = coachingUrlFor(session && session.cohort);
+  if (!url) return Promise.reject(new Error('NO_COACHING'));
+  return call(url, a, e);
+};
 const dlApi = (a, e) => call(BRAIN.deliveryUrl, a, e);
 
 // ── 저장 ─────────────────────────────────────────────
@@ -203,7 +219,14 @@ function freeForOwner(date, time, owner) {
 async function viewCoach() {
   loading();
   let d;
-  try { d = await coApi('getSlots'); } catch (_) { $('pane').innerHTML = `<div class="empty">연결에 실패했어요.</div>`; return; }
+  try { d = await coApi('getSlots'); }
+  catch (e) {
+    $('pane').innerHTML = String(e && e.message) === 'NO_COACHING'
+      ? `<div class="empty">컨설팅은 준비 중이에요.<br>담당 강사가 코칭 시트를 연결하면 이용할 수 있어요.</div>`
+      : `<div class="empty">연결에 실패했어요.</div>`;
+    return;
+  }
+  if (d && !d.ok && d.error) { $('pane').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
   if (!d || !d.ok) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.</div>`; return; }
   CO.sections = d.sections || []; CO.slotRoles = {};
   const mine = d.myBookings || [];
@@ -412,7 +435,7 @@ async function viewShip() {
     DL.inv = (inv && inv.items) || [];
     DL.hist = (inv && inv.history) || [];
     DL.notice = (inv && inv.notice) || '';
-    DL.ship = ((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0);
+    DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
     DL.bal = bal && bal.ok ? bal : null;
   } catch (_) { $('pane').innerHTML = `<div class="empty">연결에 실패했어요.</div>`; return; }
   renderShip();
@@ -437,9 +460,57 @@ function renderShip() {
 }
 window.dlTab = (t) => { DL.tab = t; renderShip(); };
 
+// ➕ 입고 등록 (모바일) — 화면을 다시 그려도 입력값이 날아가지 않게 따로 들고 있는다
+let INB = { open: false, product: '', option: '', qty: 1, price: '', site: '', memo: '' };
+function inbCollect() {
+  const g = (id) => String(($(id) || {}).value || '').trim();
+  if ($('inbProduct')) {
+    INB.product = g('inbProduct'); INB.option = g('inbOption');
+    INB.qty = Number(g('inbQty')) || 0; INB.price = g('inbPrice');
+    INB.site = g('inbSite'); INB.memo = g('inbMemo');
+  }
+}
+window.inbToggle = function () { inbCollect(); INB.open = !INB.open; renderShip(); };
+window.inbSubmit = async function () {
+  inbCollect();
+  if (!INB.product) { alert('카탈로그명을 입력해주세요.'); return; }
+  if (!(INB.qty >= 1)) { alert('수량을 확인해주세요.'); return; }
+  const btn = $('inbBtn'); if (btn) { btn.disabled = true; btn.textContent = '등록 중…'; }
+  try {
+    const d = await dlApi('addInbound', { product: INB.product, option: INB.option, qty: INB.qty,
+                                          price: INB.price, site: INB.site, memo: INB.memo });
+    if (d && d.ok) {
+      INB = { open: false, product: '', option: '', qty: 1, price: '', site: '', memo: '' };
+      toast('입고 등록했어요 📦');
+      viewShip();                       // 재고 목록까지 새로 불러온다
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = '➕ 입고 등록'; }
+      alert((d && d.error) || '등록에 실패했어요.');
+    }
+  } catch (_) {
+    if (btn) { btn.disabled = false; btn.textContent = '➕ 입고 등록'; }
+    alert('연결 오류로 등록하지 못했어요.');
+  }
+};
+
+
 // 재고 검색 — 띄어쓰기·대소문자 무시. 현재 재고와 입출고 내역을 한 번에 거른다.
 const invNorm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, '');
 const invKey = function () { return esc(invNorm(Array.prototype.join.call(arguments, ' '))); };
+// 구매처 열기 — 학생이 직접 넣은 주소면 새 탭으로 연다 (주소 형태가 아니면 글자만 보여줌)
+function siteUrlOf(v) {
+  const t = String(v || '').trim();
+  if (!t) return '';
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^[\w.-]+\.[a-z]{2,}([/?#]|$)/i.test(t)) return 'https://' + t;
+  return '';
+}
+window.openBuySite = function (v) {
+  const url = siteUrlOf(v);
+  if (!url) { toast('구매처가 주소 형태가 아니라서 열 수 없어요.'); return; }
+  window.open(url, '_blank', 'noopener');
+};
+
 window.invFilter = function () {
   const box = $('invQ'); if (!box) return;
   const q = invNorm(box.value);
@@ -467,18 +538,45 @@ function paneInv() {
           <button type="button" id="invClr" class="btn mini ghost" style="display:none" onclick="invClear()">✕ 지우기</button></div>
       </div>`;
   }
+  // ➕ 입고 등록 — PC에서만 되던 걸 폰에서도 (접었다 펼 수 있게)
+  h += `<div class="sec">➕ 입고 등록 (사무실로 보낼 물건)</div>
+    <div class="card">
+      ${INB.open ? `
+        <label class="lbl">카탈로그명</label>
+        <input id="inbProduct" type="text" placeholder="예) 포레스트 샴푸" value="${esc(INB.product)}">
+        <label class="lbl">옵션 (선택)</label>
+        <input id="inbOption" type="text" placeholder="예) 블랙 (색상만 · 용량은 카탈로그명에)" value="${esc(INB.option)}">
+        <label class="lbl">수량</label>
+        <input id="inbQty" type="number" inputmode="numeric" min="1" value="${INB.qty || 1}">
+        <label class="lbl">공급가 (선택)</label>
+        <input id="inbPrice" type="text" inputmode="numeric" placeholder="예) 12000" value="${esc(INB.price)}">
+        <label class="lbl">구매사이트 (선택)</label>
+        <input id="inbSite" type="text" placeholder="예) 도매처 링크" value="${esc(INB.site)}">
+        <label class="lbl">메모 (선택)</label>
+        <input id="inbMemo" type="text" placeholder="예) 택배 3박스로 발송" value="${esc(INB.memo)}">
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="inbBtn" onclick="inbSubmit()">➕ 입고 등록</button>
+          <button class="btn mini ghost" onclick="inbToggle()">접기</button>
+        </div>`
+      : `<p class="muted" style="margin:0 0 8px;font-size:12.5px">사무실로 보낼 물건을 등록하면 강사가 검수 후 보관해요.</p>
+         <button class="btn" onclick="inbToggle()">➕ 입고 등록하기</button>`}
+    </div>`;
   h += `<div class="sec">📦 현재 재고</div>`;
   h += DL.inv.length
     ? `<div class="card" style="padding:6px 12px"><table class="tbl">
         <thead><tr><th>상품</th><th style="text-align:right">수량</th></tr></thead><tbody id="invRows">` +
       DL.inv.map(it => {
         const p = packOf(it.product);
-        return `<tr data-s="${invKey(it.product, it.option, it.price, it.expiry)}"><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
-          ${it.option ? `<div class="muted" style="font-size:11.5px">${esc(it.option)}</div>` : ''}</td>
-          <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}</td></tr>`;
+        return `<tr data-s="${invKey(it.product, it.option, it.price, it.expiry, it.memo, it.site)}"><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
+          ${it.option ? `<div class="muted" style="font-size:11.5px">${esc(it.option)}</div>` : ''}
+          ${it.memo ? `<div class="invMemo">📝 ${esc(it.memo)}</div>` : ''}
+          ${it.site ? (siteUrlOf(it.site)
+            ? `<div class="invSite"><a href="#" data-site="${esc(it.site)}" onclick="openBuySite(this.dataset.site);return false;">🔗 ${esc(it.site)}</a></div>`
+            : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}</td>
+          <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
       }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
       + `</tbody></table></div>`
-    : `<div class="empty">아직 등록된 재고가 없어요.<br>입고 등록은 PC 프로그램에서 할 수 있어요.</div>`;
+    : `<div class="empty">아직 등록된 재고가 없어요.<br>위에서 입고 등록을 하면 강사 검수 후 반영돼요.</div>`;
   const hist = (DL.hist || []).slice(0, 15);
   if (hist.length) {
     h += `<div class="sec">🧾 최근 입출고</div><div id="invHist">` + hist.map(x => {
@@ -542,11 +640,27 @@ function paneShip() {
         <span class="pill ${k}">${esc(st)}</span></div>
       <div class="m">${esc(s.receiver || '')} · ${esc(fmtDT(s.at))}
         ${s.invoice ? `<br>송장 ${esc(s.invoice)} ${esc(s.courier || '')}` : ''}</div>
-      ${st.indexOf('접수') >= 0 ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>` : ''}
+      ${st.indexOf('접수') >= 0 ? `<div class="locked">🔒 접수 완료 · 변경은 물류담당자에게 문의해주세요</div>` : ''}
     </div>`;
   }).join('') : `<div class="empty">${DL.ship.length ? '조건에 맞는 배송요청이 없어요.' : '아직 배송요청이 없어요.'}</div>`;
   if (DL.ship.length) h += `<p class="muted" style="margin:8px 2px 0;font-size:12px">${shown.length}건 표시 중 (전체 ${DL.ship.length}건)</p>`;
   return h;
+}
+// 배송 목록 정렬용 시각 — 서버가 옛 버전이면 'Wed Aug 26 2026…' 로 올 수 있어 앱에서도 정규화한다
+function dlWhen(v) {
+  const t = String(v == null ? '' : v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t;
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? t : (d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' +
+    String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' +
+    String(d.getSeconds()).padStart(2, '0'));
+}
+// 최근 배송이 위로 (수강생 요청)
+function dlSortNewest(list) {
+  return (list || []).map((s, i) => ({ s, i, k: dlWhen(s.at) }))
+    .sort((a, b) => (a.k === b.k ? b.i - a.i : (a.k < b.k ? 1 : -1)))
+    .map(x => x.s);
 }
 window.dlShipTab = (k) => { DL.shipTab = k; renderShip(); };
 
@@ -558,7 +672,7 @@ window.dlInfo = function () {
   if (!it) { box.innerHTML = ''; return; }
   const rows = [];
   if (it.price) rows.push(['💰 구매가격', esc(String(it.price)) + '원']);
-  if (it.site)  rows.push(['🔗 구매처', /^https?:\\//i.test(it.site)
+  if (it.site)  rows.push(['🔗 구매처', /^https?:\/\//i.test(it.site)
       ? `<a href="${esc(it.site)}" target="_blank" rel="noopener">${esc(it.site)}</a>`
       : esc(it.site)]);
   if (it.memo)  rows.push(['📝 입고메모', esc(it.memo)]);
@@ -598,7 +712,8 @@ window.dlSend = async function () {
   } catch (_) { alert('연결 오류로 보내지 못했어요.'); btn.disabled = false; btn.textContent = '배송요청 보내기'; }
 };
 window.dlCancel = async function (at) {
-  if (!confirm('이 배송요청을 취소할까요?')) return;
+  alert('접수된 배송요청은 취소할 수 없어요.\n\n' + '잘못 넣으셨다면 물류담당자에게 문의해주세요.');
+  return;
   try {
     const d = await dlApi('cancelShipping', { at });
     if (d && d.ok) { toast('취소했어요'); viewShip(); }
@@ -731,115 +846,139 @@ window.ackMsg = function () {
   if (MSG.queue.length) setTimeout(showNextMsg, 250);
 };
 
-// ══════════ 💰 마진 계산기 ══════════
-//  판매가에서 매입가·택배비·수수료·부가세를 빼고 실제로 남는 돈을 계산한다.
-//  · 판매가·매입가는 '부가세 포함 금액'(우리가 실제로 주고받는 돈) 기준.
-//  · 납부 부가세 = (판매가 − 매입가) ÷ 11   ← 매출세액 − 매입세액
-//    간이·면세 사업자는 [부가세 계산] 을 끄면 이 항목이 빠진다.
+// ══════════ 💰 마진 계산기 (묶음 → 낱개 분할 판매) ══════════
+//  여러 개 들어있는 묶음을 사와서 1개(또는 몇 개)씩 나눠 파는 방식에 맞춰져 있다.
+//   · bundlePrice 묶음 하나를 사는 데 실제로 나간 돈 (배송비까지 포함한 결제금액)
+//   · bundleQty   그 묶음 안에 들어있는 개수
+//   · sellQty     한 번 주문에 몇 개씩 보내는지 (보통 1)
+//   · price       그 한 건의 판매가
+//   · ship        내가 보낼 때 드는 택배비
+//   · feeRate     판매 수수료 % (결제수수료 + 매출연동수수료)
 function marginCalc(inp) {
-  const price = Math.max(0, Number(inp.price) || 0);      // 판매가(고객이 내는 돈)
-  const cost  = Math.max(0, Number(inp.cost) || 0);       // 매입가
-  const ship  = Math.max(0, Number(inp.ship) || 0);       // 택배비
-  const etc   = Math.max(0, Number(inp.etc) || 0);        // 포장·부자재 등
-  const feeR  = Math.max(0, Number(inp.feeRate) || 0) / 100;  // 수수료율
-  const vatOn = !!inp.vat;
+  const bundlePrice = Math.max(0, Number(inp.bundlePrice) || 0);
+  const bundleQty   = Math.max(0, Number(inp.bundleQty) || 0);
+  const sellQty     = Math.max(1, Number(inp.sellQty) || 1);
+  const price = Math.max(0, Number(inp.price) || 0);
+  const ship  = Math.max(0, Number(inp.ship) || 0);
+  const feeR  = Math.max(0, Number(inp.feeRate) || 0) / 100;
 
-  const fee = Math.round(price * feeR);                   // 결제·판매 수수료
-  const vat = vatOn ? Math.max(0, Math.round((price - cost) / 11)) : 0;  // 납부 부가세
-  const profit = price - cost - ship - fee - etc - vat;   // 순이익
-  const rate = price > 0 ? (profit / price) * 100 : 0;    // 마진율(판매가 대비)
-  const roi  = cost > 0 ? (profit / cost) * 100 : 0;      // 원가 대비 수익률
-  return { price, cost, ship, etc, fee, vat, profit, rate, roi };
+  const unitCost = bundleQty > 0 ? bundlePrice / bundleQty : 0;  // 개당 원가
+  const cost = unitCost * sellQty;                               // 한 건에 나가는 원가
+  const fee  = Math.round(price * feeR);                         // 판매 수수료
+  const profit = price - cost - ship - fee;                      // 한 건 순이익
+  const rate = price > 0 ? (profit / price) * 100 : 0;           // 마진율(판매가 대비)
+  const roi  = cost  > 0 ? (profit / cost) * 100 : 0;            // 원가 대비 수익률
+
+  const sets = sellQty > 0 ? Math.floor(bundleQty / sellQty) : 0; // 묶음 하나로 몇 건 팔 수 있나
+  const leftover = bundleQty - sets * sellQty;                    // 팔고 남는 개수
+  const totalProfit = sets * profit;                              // 다 팔았을 때 총 이익
+  const totalRoi = bundlePrice > 0 ? (totalProfit / bundlePrice) * 100 : 0;
+  return { price, bundlePrice, bundleQty, sellQty, unitCost, cost, ship, fee,
+           profit, rate, roi, sets, leftover, totalProfit, totalRoi };
 }
 
-// 목표 마진율(%)을 맞추려면 얼마에 팔아야 하나 → 권장 판매가
-//   순이익 = P(1 − 수수료율 − vat계수) − 매입가(1 − vat계수) − 택배비 − 기타 = P × 목표율
+// 목표 마진율(%)을 남기려면 얼마에 팔아야 하나 → 권장 판매가
+//   순이익 = 판매가 − 원가 − 택배비 − 판매가×수수료율 = 판매가 × 목표율
+//   → 판매가 × (1 − 수수료율 − 목표율) = 원가 + 택배비
 function marginTargetPrice(inp, targetRate) {
-  const cost = Math.max(0, Number(inp.cost) || 0);
+  const bundleQty = Math.max(0, Number(inp.bundleQty) || 0);
+  const sellQty   = Math.max(1, Number(inp.sellQty) || 1);
+  const unitCost  = bundleQty > 0 ? (Math.max(0, Number(inp.bundlePrice) || 0) / bundleQty) : 0;
+  const cost = unitCost * sellQty;
   const ship = Math.max(0, Number(inp.ship) || 0);
-  const etc  = Math.max(0, Number(inp.etc) || 0);
   const feeR = Math.max(0, Number(inp.feeRate) || 0) / 100;
   const m    = (Number(targetRate) || 0) / 100;
-  const k    = inp.vat ? 1 / 11 : 0;                      // 부가세 계수
-  const den  = 1 - feeR - k - m;                          // 분모
-  if (den <= 0) return null;                              // 수수료+세금+목표가 100% 이상 → 불가능
-  const p = (cost * (1 - k) + ship + etc) / den;
-  return Math.ceil(p / 10) * 10;                          // 10원 단위 올림
+  const den  = 1 - feeR - m;
+  if (den <= 0) return null;                     // 수수료 + 목표마진이 100% 이상 → 불가능
+  return Math.ceil(((cost + ship) / den) / 10) * 10;   // 10원 단위 올림
 }
 const wonFmt = (n) => (Math.round(Number(n) || 0)).toLocaleString('ko-KR');
 
-function mgPrefs() { return store.get('marginPrefs', { ship: 3000, feeRate: 6, vat: true }); }
-let MG = { inv: [] };
-async function viewMargin() {
+const MG_DEF = { ship: 3000, feeRate: 6.7 };
+function mgPrefs() { return Object.assign({}, MG_DEF, store.get('marginPrefs2', {}) || {}); }
+
+function viewMargin() {
   const p = mgPrefs();
-  let inv = [];
-  try { const d = await dlApi('getInventory'); inv = ((d && d.items) || []).filter(x => x.price); } catch (_) {}
-  MG.inv = inv;
   $('pane').innerHTML = `
     <div class="sec">💰 마진 계산기</div>
     <div class="card">
-      <p class="muted" style="margin:0 0 4px;font-size:12.5px">판매가에서 매입가·택배비·수수료·부가세를 뺀 <b>실제 남는 돈</b>이에요.</p>
-      ${inv.length ? `<label class="lbl">내 재고에서 매입가 불러오기</label>
-        <select id="mgPick" onchange="mgFromStock()"><option value="">— 직접 입력 —</option>
-        ${inv.map((x, i) => `<option value="${i}">${esc(plainName(x.product))} — ${wonFmt(x.price)}원</option>`).join('')}</select>` : ''}
-      <label class="lbl">판매가 (원)</label><input id="mgPrice" type="text" inputmode="numeric" placeholder="19900" oninput="mgRun()">
-      <label class="lbl">매입가 (원)</label><input id="mgCost" type="text" inputmode="numeric" placeholder="8000" oninput="mgRun()">
+      <p class="muted" style="margin:0 0 8px;font-size:12.5px"><b>여러 개 묶음으로 사와서 1개씩 나눠 파는</b> 방식에 맞춘 계산기예요.</p>
+      <div class="mgSec">1️⃣ 얼마에 사오나요?</div>
+      <label class="lbl">묶음 구매가 (원)</label><input id="mgBundlePrice" type="text" inputmode="numeric" placeholder="24000" oninput="mgRun()">
+      <label class="lbl">묶음 수량 (개)</label><input id="mgBundleQty" type="text" inputmode="numeric" placeholder="10" oninput="mgRun()">
+      <div id="mgUnit"></div>
+    </div>
+    <div class="card">
+      <div class="mgSec">2️⃣ 얼마에 파나요?</div>
+      <label class="lbl">한 번에 보낼 개수</label><input id="mgSellQty" type="text" inputmode="numeric" value="1" oninput="mgRun()">
+      <label class="lbl">판매가 (원)</label><input id="mgPrice" type="text" inputmode="numeric" placeholder="6900" oninput="mgRun()">
       <label class="lbl">택배비 (원)</label><input id="mgShip" type="text" inputmode="numeric" value="${p.ship}" oninput="mgRun()">
       <label class="lbl">수수료 (%)</label><input id="mgFee" type="text" inputmode="decimal" value="${p.feeRate}" oninput="mgRun()">
-      <label class="lbl">기타비용 (원)</label><input id="mgEtc" type="text" inputmode="numeric" placeholder="포장·부자재" oninput="mgRun()">
-      <label class="mgChk"><input type="checkbox" id="mgVat" ${p.vat ? 'checked' : ''} onchange="mgRun()"> 부가세 계산에 넣기</label>
     </div>
     <div id="mgOut"></div>
     <div class="sec">🎯 목표 마진율로 판매가 계산</div>
     <div class="mgTargets">${[10,15,20,25,30,40].map(t => `<button type="button" class="mgT" onclick="mgTarget(${t})">${t}%</button>`).join('')}</div>
     <div id="mgTargetOut"></div>
     <div class="card muted" style="font-size:11.5px;line-height:1.8;margin-top:12px">
-      · 수수료는 결제수수료 + 매출연동수수료 합계예요. 스마트스토어는 보통 <b>6% 안팎</b>이에요.<br>
-      · 부가세는 (판매가 − 매입가) ÷ 11 로 계산해요. 간이·면세 사업자는 체크를 꺼주세요.
+      · <b>묶음 구매가</b>는 그 묶음을 받기까지 실제로 나간 돈이에요. 사올 때 낸 배송비도 넣어주세요.<br>
+      · 수수료는 결제수수료 + 매출연동수수료 합계예요. 스마트스토어는 보통 <b>6.7%</b> 예요.
     </div>`;
   mgRun();
 }
-window.mgFromStock = function () {
-  const it = MG.inv[Number(($('mgPick') || {}).value)];
-  if (!it) return;
-  const c = $('mgCost'); if (c) c.value = String(it.price).replace(/[^0-9]/g, '');
-  mgRun();
-};
+
+
 function mgNum(id) { const el = $(id); return el ? Number(String(el.value).replace(/[^0-9.]/g, '')) || 0 : 0; }
 function mgInput() {
-  return { price: mgNum('mgPrice'), cost: mgNum('mgCost'), ship: mgNum('mgShip'),
-           etc: mgNum('mgEtc'), feeRate: mgNum('mgFee'), vat: !!($('mgVat') || {}).checked };
+  return { bundlePrice: mgNum('mgBundlePrice'), bundleQty: mgNum('mgBundleQty'),
+           sellQty: mgNum('mgSellQty'), price: mgNum('mgPrice'),
+           ship: mgNum('mgShip'), feeRate: mgNum('mgFee') };
 }
+
 window.mgRun = function () {
-  const inp = mgInput();
-  store.set('marginPrefs', { ship: inp.ship, feeRate: inp.feeRate, vat: inp.vat });
+  const v = mgInput();
+  store.set('marginPrefs2', { ship: v.ship, feeRate: v.feeRate });
+  const r = marginCalc(v);
+  const u = $('mgUnit');
+  if (u) u.innerHTML = (v.bundlePrice && v.bundleQty)
+    ? `<div class="mgUnit">개당 원가 <b>${wonFmt(r.unitCost)}원</b>
+         <span class="muted">${wonFmt(v.bundlePrice)}원 ÷ ${v.bundleQty}개</span></div>`
+    : `<div class="mgUnit off">묶음 구매가와 수량을 넣으면 개당 원가가 나와요.</div>`;
+
   const box = $('mgOut'); if (!box) return;
-  if (!inp.price) { box.innerHTML = `<div class="mgHint">판매가를 넣으면 바로 계산돼요.</div>`; return; }
-  const r = marginCalc(inp), good = r.profit > 0;
+  if (!v.price || !v.bundleQty) { box.innerHTML = `<div class="mgHint">사온 가격과 팔 가격을 넣으면 바로 계산돼요.</div>`; return; }
+  const good = r.profit > 0;
+  const unitTxt = r.sellQty > 1 ? `− 매입원가 (${wonFmt(r.unitCost)}원 × ${r.sellQty}개)` : `− 매입원가 (개당)`;
   box.innerHTML = `
     <div class="mgResult ${good ? '' : 'bad'}">
-      <div class="mgBig"><span>순이익</span><b>${wonFmt(r.profit)}원</b></div>
+      <div class="mgBig"><span>1건 순이익</span><b>${wonFmt(r.profit)}원</b></div>
       <div class="mgRate">마진율 <b>${r.rate.toFixed(1)}%</b><span class="muted"> · 원가대비 ${r.roi.toFixed(1)}%</span></div>
-      ${good ? '' : `<div class="mgWarn">⚠️ 팔수록 손해예요. 판매가를 올리거나 매입가를 낮춰야 해요.</div>`}
+      ${good ? '' : `<div class="mgWarn">⚠️ 팔수록 손해예요. 판매가를 올리거나 더 싸게 사와야 해요.</div>`}
     </div>
     <div class="mgRows">
       <div><span>판매가</span><b>${wonFmt(r.price)}원</b></div>
-      <div><span>− 매입가</span><b>${wonFmt(r.cost)}원</b></div>
+      <div><span>${unitTxt}</span><b>${wonFmt(r.cost)}원</b></div>
       <div><span>− 택배비</span><b>${wonFmt(r.ship)}원</b></div>
-      <div><span>− 수수료 (${inp.feeRate}%)</span><b>${wonFmt(r.fee)}원</b></div>
-      ${r.etc ? `<div><span>− 기타비용</span><b>${wonFmt(r.etc)}원</b></div>` : ''}
-      ${inp.vat ? `<div><span>− 납부 부가세</span><b>${wonFmt(r.vat)}원</b></div>` : ''}
-      <div class="tot"><span>= 남는 돈</span><b>${wonFmt(r.profit)}원</b></div>
+      <div><span>− 수수료 (${v.feeRate}%)</span><b>${wonFmt(r.fee)}원</b></div>
+      <div class="tot"><span>= 1건에 남는 돈</span><b>${wonFmt(r.profit)}원</b></div>
+    </div>
+    <div class="mgTotal ${r.totalProfit > 0 ? '' : 'bad'}">
+      <div class="mgTotHead">📦 이 묶음 하나를 다 팔면</div>
+      <div class="mgTotRow"><span>판매 가능 건수</span><b>${r.sets}건</b></div>
+      <div class="mgTotRow"><span>들어간 돈 (묶음 구매가)</span><b>${wonFmt(r.bundlePrice)}원</b></div>
+      <div class="mgTotRow big"><span>총 이익</span><b>${wonFmt(r.totalProfit)}원</b></div>
+      <div class="mgTotRow"><span>투자금 대비 수익률</span><b>${r.totalRoi.toFixed(1)}%</b></div>
+      ${r.leftover ? `<div class="mgTotNote">※ ${r.leftover}개가 남아요. 개수를 딱 나눠떨어지게 잡으면 손해가 없어요.</div>` : ''}
     </div>`;
 };
+
 window.mgTarget = function (t) {
-  const inp = mgInput(), box = $('mgTargetOut'); if (!box) return;
-  if (!inp.cost) { box.innerHTML = `<div class="mgHint">매입가를 먼저 넣어주세요.</div>`; return; }
-  const p = marginTargetPrice(inp, t);
-  if (!p) { box.innerHTML = `<div class="mgHint">수수료·세금이 너무 커서 그 마진율은 나올 수 없어요.</div>`; return; }
-  const chk = marginCalc(Object.assign({}, inp, { price: p }));
+  const v = mgInput(), box = $('mgTargetOut'); if (!box) return;
+  if (!v.bundlePrice || !v.bundleQty) { box.innerHTML = `<div class="mgHint">먼저 묶음 구매가와 수량을 넣어주세요.</div>`; return; }
+  const p = marginTargetPrice(v, t);
+  if (!p) { box.innerHTML = `<div class="mgHint">수수료가 너무 커서 그 마진율은 나올 수 없어요.</div>`; return; }
+  const chk = marginCalc(Object.assign({}, v, { price: p }));
   box.innerHTML = `<div class="mgTargetBox">마진율 <b>${t}%</b> 를 남기려면 → <b class="mgP">${wonFmt(p)}원</b> 에 파세요
-      <div class="muted" style="margin-top:5px">그때 남는 돈 ${wonFmt(chk.profit)}원</div>
+      <div class="muted" style="margin-top:5px">1건에 ${wonFmt(chk.profit)}원 · 묶음 다 팔면 ${wonFmt(chk.totalProfit)}원</div>
       <button type="button" class="btn mini ghost" style="margin-top:8px" onclick="mgApply(${p})">이 가격으로 계산</button></div>`;
 };
 window.mgApply = function (p) { const el = $('mgPrice'); if (el) { el.value = p; mgRun(); } };

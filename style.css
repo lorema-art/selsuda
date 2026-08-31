@@ -215,3 +215,25 @@ textarea{resize:vertical;min-height:84px}
 .chip .cnt{display:inline-block;margin-left:5px;padding:0 6px;border-radius:999px;
   background:var(--bloom-soft);color:var(--bloom-deep);font-size:10.5px;font-weight:800}
 .chip.on .cnt{background:rgba(255,255,255,.25);color:#fff}
+
+/* 마진 계산기 · 묶음 분할 판매 */
+.mgSec{font-size:13px;font-weight:800;color:var(--bloom-deep,#a02457);margin:0 0 2px}
+.mgUnit{margin-top:12px;padding:11px 13px;border-radius:10px;background:var(--bloom-soft2,#fff3f8);
+  border-left:3px solid var(--bloom,#e75a8f);font-size:13.5px}
+.mgUnit b{font-size:16px;color:var(--bloom-deep,#a02457);font-variant-numeric:tabular-nums}
+.mgUnit .muted{font-size:11.5px;margin-left:6px}
+.mgUnit.off{background:#f7f8fb;border-left-color:#dfe2ea;color:#8b90a0;font-size:12.5px}
+.mgTotal{margin-top:12px;padding:13px 15px;border-radius:12px;background:#0f2e46;color:#fff}
+.mgTotal.bad{background:#4a1f24}
+.mgTotHead{font-size:12.5px;opacity:.85;margin-bottom:7px}
+.mgTotRow{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0}
+.mgTotRow span{opacity:.8}
+.mgTotRow b{font-variant-numeric:tabular-nums}
+.mgTotRow.big{padding-top:7px;margin-top:4px;border-top:1px solid rgba(255,255,255,.18)}
+.mgTotRow.big b{font-size:20px}
+.mgTotNote{margin-top:8px;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,.12);font-size:11.5px}
+.invMemo{margin-top:3px;font-size:11.5px;color:#6b7080;line-height:1.45;word-break:break-all}
+.invSite{margin-top:2px;font-size:11.5px;line-height:1.4;word-break:break-all;color:#6b7080}
+.invSite a{color:#2f6fd0;text-decoration:none}
+.pend{margin-top:2px;font-size:10.5px;font-weight:700;color:#8a6100;background:#fff3d6;border-radius:999px;padding:1px 6px;display:inline-block}
+.locked{margin-top:9px;font-size:11.5px;color:#8b90a0;background:#f4f5f8;border-radius:999px;padding:5px 10px;display:inline-block}

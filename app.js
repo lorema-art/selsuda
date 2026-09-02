@@ -47,6 +47,23 @@ function warmUp() {
   });
 }
 const api = (a, e) => call(BRAIN.apiUrl, a, e);
+
+// 저장된 세션의 기수는 낡을 수 있다 (강사가 메인시트에서 기수를 고쳐도 폰은 모름).
+//  앱을 열 때 현재 기수를 다시 물어보고 달라졌으면 갱신한다.
+async function refreshSessionCohort() {
+  if (!session || !session.userId) return false;
+  try {
+    const d = await api('whoami', { userId: session.userId });
+    if (!d || !d.ok || !d.cohort) return false;
+    if (String(d.cohort) === String(session.cohort || '') &&
+        (!d.nickname || d.nickname === session.nickname)) return false;
+    session.cohort = d.cohort;
+    if (d.nickname) session.nickname = d.nickname;
+    store.set('session', session);
+    return true;
+  } catch (_) { return false; }   // 서버가 옛 버전이면 조용히 넘어간다
+}
+
 const qApi = (a, e) => call(BRAIN.questionsUrl, a, e);
 // 컨설팅은 기수마다 담당 강사 시트가 다르다.
 //  ⚠ 예전에는 기수와 무관하게 BRAIN.coachingUrl(= 뷰셀 시트) 하나만 불러서,
@@ -366,8 +383,13 @@ async function viewAsk() {
   let h = `<div class="card">
       <label class="lbl">궁금한 점을 남겨주세요</label>
       <textarea id="qText" placeholder="예) 상세페이지 구성이 막막해요"></textarea>
-      <div class="row"><button class="btn" id="qBtn" onclick="askSend()">질문 보내기</button></div>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">답변이 달리면 이 화면에 표시돼요.<br>화면 캡쳐 첨부는 PC 프로그램에서 할 수 있어요.</p>
+      <div id="qPhotoBox"></div>
+      <div class="row" style="margin-top:8px">
+        <label class="btn mini ghost" for="qPhotoInput">📷 사진 첨부</label>
+        <input id="qPhotoInput" type="file" accept="image/*" style="display:none" onchange="askPickPhoto(this)">
+        <button class="btn" id="qBtn" onclick="askSend()">질문 보내기</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">답변이 달리면 이 화면에 표시돼요.<br>화면을 캡쳐해서 붙이시면 훨씬 빨리 해결돼요.</p>
     </div>`;
   h += `<div class="sec">📜 내 질문 내역</div>`;
   if (items.length) {
@@ -402,6 +424,64 @@ window.qFilter = function () {
   const x = $('qClr'); if (x) x.style.display = q ? '' : 'none';
 };
 window.qClear = function () { const b = $('qQ'); if (b) { b.value = ''; b.focus(); } qFilter(); };
+// ── 📷 사진 첨부 ─────────────────────────────────────────
+//   폰 사진은 4~8MB나 돼서 그대로 보내면 전송이 실패한다.
+//   브라우저에서 긴 변 1280px · JPEG 75% 로 줄여서 보낸다(보통 200KB 안팎).
+const PHOTO_MAX_PX = 1280;
+const PHOTO_QUALITY = 0.75;
+let ASK_PHOTO = null;      // 질문에 붙일 사진 (data:image/jpeg;base64,...)
+
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('파일이 없어요'));
+    if (!/^image\//.test(file.type)) return reject(new Error('이미지 파일만 붙일 수 있어요'));
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('사진을 읽지 못했어요'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('사진을 열지 못했어요'));
+      img.onload = () => {
+        let { width: w, height: h } = img;
+        const scale = Math.min(1, PHOTO_MAX_PX / Math.max(w, h));
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);   // 투명 png → 검은 배경 방지
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(c.toDataURL('image/jpeg', PHOTO_QUALITY)); }
+        catch (e) { reject(new Error('사진을 변환하지 못했어요')); }
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+window.askPickPhoto = async function (input) {
+  const f = input && input.files && input.files[0];
+  if (!f) return;
+  const box = $('qPhotoBox');
+  if (box) box.innerHTML = `<p class="muted" style="font-size:12px">사진을 줄이는 중…</p>`;
+  try {
+    ASK_PHOTO = await shrinkImage(f);
+    const kb = Math.round(ASK_PHOTO.length * 0.75 / 1024);
+    if (box) box.innerHTML =
+      `<div class="photoChip"><img src="${ASK_PHOTO}" alt="첨부한 사진">
+         <span>사진 1장 (${kb}KB)</span>
+         <button type="button" onclick="askClearPhoto()">✕</button></div>`;
+  } catch (e) {
+    ASK_PHOTO = null;
+    if (box) box.innerHTML = '';
+    alert(e.message || '사진을 붙이지 못했어요.');
+  }
+  if (input) input.value = '';        // 같은 사진을 다시 고를 수 있게
+};
+window.askClearPhoto = function () {
+  ASK_PHOTO = null;
+  const box = $('qPhotoBox'); if (box) box.innerHTML = '';
+};
+
 window.askSend = async function () {
   const btn = $('qBtn'), text = ($('qText').value || '').trim();
   if (!text) { alert('질문 내용을 입력해주세요.'); return; }
@@ -411,8 +491,13 @@ window.askSend = async function () {
   }
   btn.disabled = true; btn.textContent = '보내는 중…';
   try {
-    const d = await qApi('ask', { question: text });
-    if (d && d.ok) { $('qText').value = ''; toast('질문을 보냈어요 📨'); viewAsk(); }
+    if (ASK_PHOTO) btn.textContent = '사진 올리는 중…';
+    const d = await qApi('ask', { question: text, photo: ASK_PHOTO || '' });
+    if (d && d.ok) {
+      $('qText').value = ''; ASK_PHOTO = null;
+      toast(d.photoErr ? '질문은 보냈어요 (사진은 실패)' : '질문을 보냈어요 📨');
+      viewAsk();
+    }
     else alert((d && d.error) || '전송에 실패했어요.');
   } catch (_) { alert('연결 오류로 보내지 못했어요.'); }
   btn.disabled = false; btn.textContent = '질문 보내기';
@@ -987,7 +1072,11 @@ window.mgApply = function (p) { const el = $('mgPrice'); if (el) { el.value = p;
 (function boot() {
   warmUp();                       // 두뇌 미리 깨우기
   const s = store.get('session', null);
-  if (s && s.userId) { session = s; enterMain(); }
+  if (s && s.userId) {
+    session = s; enterMain();
+    // 강사가 기수를 바꿨으면 따라잡는다 (바뀌면 화면도 새로 그림)
+    refreshSessionCohort().then(function (ch) { if (ch) enterMain(); });
+  }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

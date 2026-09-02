@@ -237,3 +237,11 @@ textarea{resize:vertical;min-height:84px}
 .invSite a{color:#2f6fd0;text-decoration:none}
 .pend{margin-top:2px;font-size:10.5px;font-weight:700;color:#8a6100;background:#fff3d6;border-radius:999px;padding:1px 6px;display:inline-block}
 .locked{margin-top:9px;font-size:11.5px;color:#8b90a0;background:#f4f5f8;border-radius:999px;padding:5px 10px;display:inline-block}
+/* 📷 사진 첨부 */
+.photoChip{display:flex;align-items:center;gap:9px;margin-top:9px;padding:7px 9px;border:1px solid #e6e8ef;
+  border-radius:11px;background:#fafbfc;font-size:12.5px;color:#6b7080}
+.photoChip img{width:44px;height:44px;object-fit:cover;border-radius:7px;flex:none}
+.photoChip span{flex:1}
+.photoChip button{border:0;background:#eef0f4;color:#6b7080;border-radius:999px;width:24px;height:24px;
+  font-size:13px;line-height:1;cursor:pointer;flex:none}
+label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}

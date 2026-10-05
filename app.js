@@ -144,17 +144,64 @@ function enterMain() {
   $('loginView').classList.add('hidden');
   $('mainView').classList.remove('hidden');
   go('home');
+  applyTabConfig();                    // 기수별로 숨긴/잠근 탭 반영 (PC 앱과 같은 시트 설정)
   try { showInstallBar(); } catch (_) {}
   setTimeout(() => { try { checkLogisticsMessages(); } catch (_) {} }, 1200);
+}
+
+// ── 기수별 탭 설정 (숨김 / 잠금) ──────────────────────
+//  메인시트 '탭설정' 에서 기수마다 정한다. PC 앱과 똑같은 설정을 그대로 따른다.
+//    N · X · 숨김 · OFF  → 아예 안 보임
+//    잠금 · LOCK · 준비중 → 보이긴 하는데 누르면 안내만 뜸
+//  기수 칸을 '전체' 로 하면 모든 기수에 적용된다.
+let TABCFG = { hidden: new Set(), locked: new Set(), msg: null };
+// 시트의 탭 이름 → 폰 앱의 탭
+const TAB_MAP = {
+  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin'
+};
+function tabKeyOf(tab) {                     // 폰 탭 → 시트 이름(되찾기)
+  for (const k in TAB_MAP) if (TAB_MAP[k] === tab) return k;
+  return null;
+}
+async function applyTabConfig() {
+  let d = null;
+  try { d = await api('getTabConfig', { cohort: session && session.cohort }); } catch (_) { return; }
+  if (!d || !d.ok) return;
+  const H = new Set(d.hidden || []), L = new Set(d.locked || []);
+  TABCFG = { hidden: new Set(), locked: new Set(), msg: d.lockMsg || null };
+  Object.keys(TAB_MAP).forEach(k => {
+    if (H.has(k)) TABCFG.hidden.add(TAB_MAP[k]);
+    else if (L.has(k)) TABCFG.locked.add(TAB_MAP[k]);
+  });
+  // 재고·배송은 두 탭이 하나로 합쳐져 있다 — 둘 다 숨김이거나 '택배관리' 지정일 때만 숨긴다
+  if (H.has('택배관리') || (H.has('재고관리') && H.has('배송요청'))) TABCFG.hidden.add('ship');
+  else if (L.has('택배관리') || (L.has('재고관리') && L.has('배송요청'))) TABCFG.locked.add('ship');
+  document.querySelectorAll('.tab').forEach(b => {
+    b.style.display = TABCFG.hidden.has(b.dataset.tab) ? 'none' : '';
+  });
+  if (TABCFG.hidden.has(cur)) go('home');    // 보고 있던 탭이 숨겨졌으면 홈으로
+}
+// 잠긴 탭을 눌렀을 때 — 문구는 시트('잠금안내')에서 온다
+function showLockedTab() {
+  const m = TABCFG.msg || {};
+  const title = m.title || '준비 중이에요';
+  const body = m.body || ('이 기능은 아직 열리지 않았어요.' + String.fromCharCode(10) + '담당자에게 문의해주세요.');
+  const btn = (m.btnText && m.btnUrl)
+    ? `<a class="btn" href="${esc(m.btnUrl)}" target="_blank" rel="noopener">${esc(m.btnText)}</a>` : '';
+  sheet(`<h3>🔒 ${esc(title)}</h3>
+    <p class="muted" style="line-height:1.75;margin:8px 0 14px">${nl2br(esc(body))}</p>
+    ${btn}<button class="btn ghost" onclick="closeSheet()" style="margin-top:8px">닫기</button>`);
 }
 
 // ── 탭 ───────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
 function go(tab) {
+  if (TABCFG.hidden.has(tab)) return;                     // 숨긴 탭은 아예 안 열린다
+  if (TABCFG.locked.has(tab)) { showLockedTab(); return; }  // 잠긴 탭은 안내만
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, margin: viewMargin }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -175,6 +222,7 @@ async function viewHome() {
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
       <button onclick="go('ship')"><i>📦</i>재고·배송</button>
+      <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
       <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
     </div>`;
@@ -200,7 +248,11 @@ async function viewHome() {
     </div>`;
   $('pane').innerHTML = h;
 }
-window.openRecharge = () => { if (BRAIN.rechargeUrl) window.open(BRAIN.rechargeUrl, '_blank', 'noopener'); };
+window.openRecharge = () => {
+  if (!BRAIN.rechargeUrl) { toast('충전 페이지가 아직 설정되지 않았어요.'); return; }
+  toast('매일 밤 10시에 입금 확인 후 잔액에 반영돼요');
+  window.open(BRAIN.rechargeUrl, '_blank', 'noopener');
+};
 
 // ── 컨설팅 ───────────────────────────────────────────
 let CO = { sections: [], slotRoles: {}, pick: null, topic: null, weekQuota: 1, myWeeks: {} };
@@ -507,6 +559,16 @@ window.askSend = async function () {
 let DL = { inv: [], ship: [], bal: null, tab: 'inv', shipTab: 'all' };
 const plainName = (n) => String(n || '').replace(/[\s,·]*\d+\s*개입?\s*$/, '').trim() || String(n || '');
 const packOf = (n) => { const m = String(n || '').match(/(\d+)\s*개입?\s*$/); return m ? Math.max(1, Number(m[1])) : 1; };
+// 재고를 카탈로그명 오름차순으로 — 재고가 늘면 찾기 힘들다는 수강생 요청(뷰셀 1기).
+//  받아올 때 한 번 정렬해두면 재고표와 배송요청 목록이 같은 순서가 된다.
+const dlSortByName = (arr) => (arr || []).slice().sort((a, b) =>
+  (plainName(a.product) + ' ' + (a.option || '')).trim()
+    .localeCompare((plainName(b.product) + ' ' + (b.option || '')).trim(), 'ko'));
+// 유통기한 파싱 → 시각(ms). 없으면 Infinity(맨 아래).
+const dlExpTs = (s) => { const m = String(s || '').match(/(\d{4})\D+(\d{1,2})(?:\D+(\d{1,2}))?/);
+  return m ? new Date(+m[1], +m[2] - 1, +(m[3] || 1)).getTime() : Infinity; };
+// 재고를 유통기한 임박순으로(없는 건 맨 아래). 같은 날짜면 이름순(안정 정렬로 유지). 루크 요청 09-29.
+const dlSortByExpiry = (arr) => dlSortByName(arr).sort((a, b) => dlExpTs(a.expiry) - dlExpTs(b.expiry));
 const fmtDT = (s) => String(s || '').replace('T', ' ').slice(0, 16);
 
 async function viewShip() {
@@ -517,7 +579,7 @@ async function viewShip() {
       dlApi('getMyShipments').catch(() => null),
       dlApi('getBalance').catch(() => null)
     ]);
-    DL.inv = (inv && inv.items) || [];
+    DL.inv = dlSortByName((inv && inv.items) || []);   // 이름 오름차순(드롭다운·인덱스 조회 기준)
     DL.hist = (inv && inv.history) || [];
     DL.notice = (inv && inv.notice) || '';
     DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
@@ -650,28 +712,35 @@ function paneInv() {
   h += DL.inv.length
     ? `<div class="card" style="padding:6px 12px"><table class="tbl">
         <thead><tr><th>상품</th><th style="text-align:right">수량</th></tr></thead><tbody id="invRows">` +
-      DL.inv.map(it => {
+      dlSortByExpiry(DL.inv).map(it => {   // 표는 유통기한 임박순(원본 DL.inv는 이름순 유지)
         const p = packOf(it.product);
+        const send = Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0));   // 검수완료 보낼수있음
         return `<tr data-s="${invKey(it.product, it.option, it.price, it.expiry, it.memo, it.site)}"><td>${esc(plainName(it.product))}${p > 1 ? `<span class="pack">${p}개입</span>` : ''}
           ${it.option ? `<div class="muted" style="font-size:11.5px">${esc(it.option)}</div>` : ''}
           ${it.memo ? `<div class="invMemo">📝 ${esc(it.memo)}</div>` : ''}
           ${it.site ? (siteUrlOf(it.site)
             ? `<div class="invSite"><a href="#" data-site="${esc(it.site)}" onclick="openBuySite(this.dataset.site);return false;">🔗 ${esc(it.site)}</a></div>`
-            : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}</td>
-          <td class="n ${it.qty <= 0 ? 'zero' : ''}">${it.qty}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
+            : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}${it.expiry ? `<div class="muted" style="font-size:11.5px">📅 유통기한 ${esc(it.expiry)}</div>` : ''}</td>
+          <td class="n ${send <= 0 ? 'zero' : ''}">${send}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
       }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
       + `</tbody></table></div>`
     : `<div class="empty">아직 등록된 재고가 없어요.<br>위에서 입고 등록을 하면 강사 검수 후 반영돼요.</div>`;
   const hist = (DL.hist || []).slice(0, 15);
   if (hist.length) {
-    h += `<div class="sec">🧾 최근 입출고</div><div id="invHist">` + hist.map(x => {
+    h += `<div class="sec">🧾 최근 입출고</div><div id="invHist">` + hist.map((x, hi) => {
       const out = String(x.gubun || '').indexOf('출') >= 0;
-      const ret = String(x.gubun || '').indexOf('반품') >= 0;
+      const ret = /반품|취소/.test(String(x.gubun || ''));   // 반품·취소 = 재고에서 빠진 줄
       const pk = Number(x.pack) || packOf(x.product), pks = Number(x.packs) || 0;
+      // 검수 전 입고는 스스로 물릴 수 있다(서버가 canCancel 로 판정)
+      const cancel = (!out && !ret)
+        ? (x.canCancel
+            ? `<button class="btn ghost sm" onclick="cancelInb(${hi})">입고 취소</button>`
+            : (x.cancelWhy ? `<span class="lock">🔒 ${esc(String(x.cancelWhy).split('\n')[0])}</span>` : ''))
+        : '';
       return `<div class="item" data-s="${invKey(x.product, x.option, x.gubun, x.memo, x.site, x.price, x.expiry, x.at)}"><div class="h">
           <span class="t">${esc(plainName(x.product))}</span>
           <span class="pill ${ret ? 'ret' : (out ? 'wait' : 'done')}">${esc(x.gubun || '')} ${ret ? '' : (out ? '-' : '+')}${x.qty}</span>
-        </div><div class="m">${esc(fmtDT(x.at))}${pk > 1 && pks ? ` · 📦 ${pk}개입 × ${pks} = ${pk * pks}개` : ''}</div></div>`;
+        </div><div class="m">${esc(fmtDT(x.at))}${pk > 1 && pks ? ` · 📦 ${pk}개입 × ${pks} = ${pk * pks}개` : ''}</div>${cancel ? `<div class="act">${cancel}</div>` : ''}</div>`;
     }).join('') + `<div id="invNone2" class="empty" style="display:none">검색과 일치하는 내역이 없어요.</div></div>`;
   }
   return h;
@@ -725,7 +794,9 @@ function paneShip() {
         <span class="pill ${k}">${esc(st)}</span></div>
       <div class="m">${esc(s.receiver || '')} · ${esc(fmtDT(s.at))}
         ${s.invoice ? `<br>송장 ${esc(s.invoice)} ${esc(s.courier || '')}` : ''}</div>
-      ${st.indexOf('접수') >= 0 ? `<div class="locked">🔒 접수 완료 · 변경은 물류담당자에게 문의해주세요</div>` : ''}
+      ${s.canCancel
+        ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>`
+        : (st.indexOf('접수') >= 0 ? `<div class="locked">🔒 ${esc(dlOneLine(s.cancelWhy) || '변경은 물류담당자에게 문의해주세요')}</div>` : '')}
     </div>`;
   }).join('') : `<div class="empty">${DL.ship.length ? '조건에 맞는 배송요청이 없어요.' : '아직 배송요청이 없어요.'}</div>`;
   if (DL.ship.length) h += `<p class="muted" style="margin:8px 2px 0;font-size:12px">${shown.length}건 표시 중 (전체 ${DL.ship.length}건)</p>`;
@@ -796,12 +867,26 @@ window.dlSend = async function () {
     } else { alert((d && d.error) || '접수에 실패했어요.'); btn.disabled = false; btn.textContent = '배송요청 보내기'; }
   } catch (_) { alert('연결 오류로 보내지 못했어요.'); btn.disabled = false; btn.textContent = '배송요청 보내기'; }
 };
+// 서버 안내문은 줄바꿈이 있어 카드에 그대로 못 쓴다 → 첫 줄만
+function dlOneLine(t){ return String(t == null ? '' : t).split('\n')[0].trim(); }
 window.dlCancel = async function (at) {
-  alert('접수된 배송요청은 취소할 수 없어요.\n\n' + '잘못 넣으셨다면 물류담당자에게 문의해주세요.');
-  return;
+  if (!confirm('이 배송요청을 취소할까요?\n\n차감된 배송비가 있으면 함께 환불돼요.')) return;
   try {
     const d = await dlApi('cancelShipping', { at });
     if (d && d.ok) { toast('취소했어요'); viewShip(); }
+    else alert((d && d.error) || '취소하지 못했어요.');
+  } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
+};
+
+// 검수 전 입고 자체취소 — 잘못 넣은 입고를 수강생이 스스로 물린다(루크 요청 09-10)
+window.cancelInb = async function (hi) {
+  const x = (DL.hist || [])[hi]; if (!x) return;
+  const n = (Number(x.pack) || 1) * (Number(x.packs) || 0);
+  if (!confirm(`이 입고를 취소할까요?\n\n${plainName(x.product)}${x.option ? ' · ' + x.option : ''}`
+    + `\n${n ? n + '개' : ''}\n\n재고에서 빠집니다. (기록은 남아요)`)) return;
+  try {
+    const d = await dlApi('cancelInbound', { row: x.row, at: x.at });
+    if (d && d.ok) { toast('입고를 취소했어요'); viewShip(); }
     else alert((d && d.error) || '취소하지 못했어요.');
   } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
 };
@@ -919,8 +1004,10 @@ function showNextMsg() {
   const q = MSG.queue[0];
   MSG.showing = true;
   const more = MSG.queue.length > 1 ? `<p class="muted" style="margin-top:10px">읽지 않은 메시지가 ${MSG.queue.length - 1}개 더 있어요.</p>` : '';
-  sheet(`<h3>💬 물류담당자 메시지</h3>
-    <div class="msgBox">${nl2br(q.reply || '')}</div>${more}
+  const qMsg = String(q.message || '').trim();   // 어떤 문의에 대한 답변인지 원래 질문도 보여줌
+  const qBox = qMsg ? `<div class="msgQ"><b>내 문의</b><br>${nl2br(qMsg)}</div>` : '';
+  sheet(`<h3>💬 물류담당자 답변</h3>
+    ${qBox}<div class="msgBox"><b>답변</b><br>${nl2br(q.reply || '')}</div>${more}
     <div class="row"><button class="btn" onclick="ackMsg()">확인했어요</button></div>`, true);
 }
 window.ackMsg = function () {
@@ -941,13 +1028,15 @@ window.ackMsg = function () {
 //   · feeRate     판매 수수료 % (결제수수료 + 매출연동수수료)
 function marginCalc(inp) {
   const bundlePrice = Math.max(0, Number(inp.bundlePrice) || 0);
+  const point       = Math.max(0, Number(inp.point) || 0);        // 공급가에서 빠지는 포인트·할인
+  const netBundle   = Math.max(0, bundlePrice - point);           // 실제로 나간 돈
   const bundleQty   = Math.max(0, Number(inp.bundleQty) || 0);
   const sellQty     = Math.max(1, Number(inp.sellQty) || 1);
   const price = Math.max(0, Number(inp.price) || 0);
   const ship  = Math.max(0, Number(inp.ship) || 0);
   const feeR  = Math.max(0, Number(inp.feeRate) || 0) / 100;
 
-  const unitCost = bundleQty > 0 ? bundlePrice / bundleQty : 0;  // 개당 원가
+  const unitCost = bundleQty > 0 ? netBundle / bundleQty : 0;    // 개당 원가 (포인트 뺀 뒤)
   const cost = unitCost * sellQty;                               // 한 건에 나가는 원가
   const fee  = Math.round(price * feeR);                         // 판매 수수료
   const profit = price - cost - ship - fee;                      // 한 건 순이익
@@ -957,8 +1046,8 @@ function marginCalc(inp) {
   const sets = sellQty > 0 ? Math.floor(bundleQty / sellQty) : 0; // 묶음 하나로 몇 건 팔 수 있나
   const leftover = bundleQty - sets * sellQty;                    // 팔고 남는 개수
   const totalProfit = sets * profit;                              // 다 팔았을 때 총 이익
-  const totalRoi = bundlePrice > 0 ? (totalProfit / bundlePrice) * 100 : 0;
-  return { price, bundlePrice, bundleQty, sellQty, unitCost, cost, ship, fee,
+  const totalRoi = netBundle > 0 ? (totalProfit / netBundle) * 100 : 0;
+  return { price, bundlePrice, point, netBundle, bundleQty, sellQty, unitCost, cost, ship, fee,
            profit, rate, roi, sets, leftover, totalProfit, totalRoi };
 }
 
@@ -968,7 +1057,8 @@ function marginCalc(inp) {
 function marginTargetPrice(inp, targetRate) {
   const bundleQty = Math.max(0, Number(inp.bundleQty) || 0);
   const sellQty   = Math.max(1, Number(inp.sellQty) || 1);
-  const unitCost  = bundleQty > 0 ? (Math.max(0, Number(inp.bundlePrice) || 0) / bundleQty) : 0;
+  const net = Math.max(0, (Number(inp.bundlePrice) || 0) - (Number(inp.point) || 0));   // 포인트 뺀 실제 지출
+  const unitCost  = bundleQty > 0 ? (net / bundleQty) : 0;
   const cost = unitCost * sellQty;
   const ship = Math.max(0, Number(inp.ship) || 0);
   const feeR = Math.max(0, Number(inp.feeRate) || 0) / 100;
@@ -986,11 +1076,13 @@ function viewMargin() {
   const p = mgPrefs();
   $('pane').innerHTML = `
     <div class="sec">💰 마진 계산기</div>
+    <div id="mgFrom" class="card mgFrom" style="display:none"></div>
     <div class="card">
       <p class="muted" style="margin:0 0 8px;font-size:12.5px"><b>여러 개 묶음으로 사와서 1개씩 나눠 파는</b> 방식에 맞춘 계산기예요.</p>
       <div class="mgSec">1️⃣ 얼마에 사오나요?</div>
       <label class="lbl">묶음 구매가 (원)</label><input id="mgBundlePrice" type="text" inputmode="numeric" placeholder="24000" oninput="mgRun()">
       <label class="lbl">묶음 수량 (개)</label><input id="mgBundleQty" type="text" inputmode="numeric" placeholder="10" oninput="mgRun()">
+      <label class="lbl">포인트 · 할인 (원)</label><input id="mgPoint" type="text" inputmode="numeric" placeholder="공급가에서 빠지는 금액" oninput="mgRun()">
       <div id="mgUnit"></div>
     </div>
     <div class="card">
@@ -1008,13 +1100,209 @@ function viewMargin() {
       · <b>묶음 구매가</b>는 그 묶음을 받기까지 실제로 나간 돈이에요. 사올 때 낸 배송비도 넣어주세요.<br>
       · 수수료는 결제수수료 + 매출연동수수료 합계예요. 스마트스토어는 보통 <b>6.7%</b> 예요.
     </div>`;
+  applyMgPrefill();
   mgRun();
+}
+
+// '오늘의 할인'에서 넘어온 값 채우기 (사온 값=딜 가격, 팔 값=카탈로그 최저가보다 10원 싸게)
+let MG_PREFILL = null;
+function applyMgPrefill() {
+  if (!MG_PREFILL) return;
+  const p = MG_PREFILL; MG_PREFILL = null;
+  const set = (id, v) => { if (v && $(id)) $(id).value = v; };
+  set('mgBundlePrice', p.bundlePrice); set('mgBundleQty', p.bundleQty || 1);
+  set('mgPoint', p.point); set('mgSellQty', p.sellQty || 1); set('mgPrice', p.price);
+  set('mgFee', p.feeRate);              // 할인 탭에서 정한 수수료
+  if (p.ship !== undefined && $('mgShip')) $('mgShip').value = p.ship;   // 구성 같으면 0원
+  const box = $('mgFrom');
+  if (box && p.name) {
+    box.style.display = '';
+    box.innerHTML = `🏷️ <b>오늘의 할인</b>에서 가져왔어요<div class="muted" style="margin-top:4px;font-size:12px">${esc(p.name)}</div>`
+      + (p.price ? `<div class="muted" style="margin-top:4px;font-size:11.5px">팔 값은 네이버 최저가보다 10원 싸게 잡은 값이에요. 고쳐도 돼요.</div>` : '');
+  }
+}
+// ── 내 적립 설정 (수강생마다 다름) ──────────────────
+//  G마켓 '최대 적립'에는 현대카드 7% 같은 1회성 혜택이 섞여 있어서 그대로 쓰면
+//  매입가가 실제보다 싸게 잡히고 마진이 부풀려진다. 각자 받는 것만 켜서 쓴다.
+//  적립 제도는 마켓마다 다르다 — G마켓·옥션은 한 회사(스마일클럽)라 같이 쓰고,
+//  화해는 기본 적립 5% 하나뿐이다(루크 확인 09-08). 그래서 마켓별로 따로 켠다.
+const DEAL_PT = [
+  { key: 'member',  rate: 5,   label: '꼭멤버 5%',      def: true,  mkt: 'ebay'   },
+  { key: 'smile',   rate: 2,   label: '스마일카드 2%',   def: false, mkt: 'ebay'   },
+  { key: 'hyundai', rate: 0.7, label: '꼭현대카드 0.7%', def: false, mkt: 'ebay'   },
+  { key: 'hwbase',  rate: 5,   label: '기본적립 5%',     def: true,  mkt: 'hwahae' },
+  // 11번가가 목록에 보여주는 '11pay 최대 N P' 는 카드 혜택까지 섞인 값이라 쓰지 않는다.
+  //  루크가 정한 기준(09-09): 기본적립 0.5% 는 누구나, 11번가카드 2% 는 카드 있는 사람만.
+  { key: 'st11base', rate: 0.5, label: '기본적립 0.5%',  def: true,  mkt: 'st11' },
+  { key: 'st11card', rate: 2,   label: '11번가카드 2%', def: false, mkt: 'st11' },
+  // 네이버+스토어 — 루크가 정한 기준(09-10): 기본적립 1% 는 누구나, 멤버십 4% 는 가입자만
+  { key: 'npbase',   rate: 1,   label: '기본적립 1%',    def: true,  mkt: 'nplus' },
+  { key: 'npmember', rate: 4,   label: '멤버십 적립 4%',  def: false, mkt: 'nplus' },
+  // SSG — SSG머니 적립. 기준을 루크가 정할 때까지 꺼둔다(꺼짐=적립 0=보수적)
+  { key: 'ssgmoney', rate: 1,   label: 'SSG머니 적립 1%', def: false, mkt: 'ssg' },
+  // 쿠팡 — 로켓와우는 무료배송 혜택뿐, 표준 적립이 없다. 목록가가 곧 매입가라 적립 0(보수적).
+  // 컬리(뷰티컬리) — 컬리페이/카드혜택가 없음. 목록가가 곧 매입가라 적립 0(보수적).
+];
+const DEAL_PT_GRP = [
+  { id: 'ebay',    name: 'G마켓·옥션' },
+  { id: 'hwahae',  name: '화해' },
+  { id: 'st11',    name: '11번가' },
+  { id: 'nplus',   name: '네이버+스토어' },
+  { id: 'ssg',     name: 'SSG' },
+  { id: 'coupang', name: '쿠팡' },
+  { id: 'kurly',   name: '컬리' },
+];
+function dealPtGrpOf(market) {
+  const m = String(market || '');
+  if (m === '화해') return 'hwahae';
+  if (m === '11번가') return 'st11';
+  if (m === '네이버+스토어') return 'nplus';
+  if (m === 'SSG') return 'ssg';
+  if (m === '쿠팡') return 'coupang';
+  if (m === '컬리') return 'kurly';
+  return 'ebay';
+}
+const DEAL_FEE_DEF = 6.7, DEAL_SHIP = 3000;
+function dealFeePct() {
+  const v = Number(store.get('dealFeePct', NaN));
+  return (isFinite(v) && v > 0 && v < 30) ? v : DEAL_FEE_DEF;
+}
+window.setDealFee = function (val) {
+  let v = Number(String(val).replace(/[^0-9.]/g, ''));
+  if (!isFinite(v) || v <= 0 || v >= 30) v = DEAL_FEE_DEF;
+  store.set('dealFeePct', v);
+  renderDeals();
+};
+function dealPtCfg() {
+  const saved = store.get('dealPointCfg', null);
+  const out = {};
+  DEAL_PT.forEach(p => { out[p.key] = saved && (p.key in saved) ? !!saved[p.key] : p.def; });
+  return out;
+}
+window.toggleDealPt = function (key) {
+  const c = dealPtCfg(); c[key] = !c[key];
+  store.set('dealPointCfg', c);
+  renderDeals();
+};
+function dealPtRateOf(gid) {
+  const c = dealPtCfg();
+  return DEAL_PT.reduce((s, p) => s + (p.mkt === gid && c[p.key] ? p.rate : 0), 0) / 100;
+}
+function dealPtRate(market) { return dealPtRateOf(dealPtGrpOf(market)); }
+function dealPtBar() {
+  const c = dealPtCfg();
+  const grp = DEAL_PT_GRP.map(g => {
+    const pct = (dealPtRateOf(g.id) * 100).toFixed(1).replace(/\.0$/, '');
+    return `<span class="dealPtGrp"><i>${g.name} <b>${pct}%</b></i>${
+      DEAL_PT.filter(p => p.mkt === g.id).map(p => `<label class="dealPtChk">
+        <input type="checkbox" ${c[p.key] ? 'checked' : ''}
+          onchange="toggleDealPt('${p.key}')"> ${p.label}</label>`).join('')}</span>`;
+  }).join('');
+  return `<div class="card dealPtBar">💳 내 적립
+    ${grp}
+    <span class="dealFeeBox">판매수수료
+      <input type="text" inputmode="decimal" value="${dealFeePct()}"
+        onchange="setDealFee(this.value)">%</span>
+    <span class="dealPtNote">내가 실제로 받는 적립만 켜고, 수수료는 내 스토어 기준으로 고쳐주세요 · 이 값으로 마진을 계산해요</span></div>`;
+}
+function dealBuy(it) {
+  const price = Number(it.price) || 0, cp = Number(it.cardPrice) || 0;
+  return (cp > 0 && cp < price && cp >= price * 0.5) ? cp : price;
+}
+// 네이버 슈퍼적립처럼 '그 상품만 적립이 큰' 것은 목록에 적힌 적립금을 그대로 쓴다(루크 09-10).
+//  판매페이지(상세) 적립금은 리뷰 적립까지 섞여 있어 쓰면 안 된다 → 수집기가 목록 값만 담아 온다.
+function dealPoint(it) {
+  const p = Number(it.point) || 0;
+  if (String(it.market || '') === '네이버+스토어' && p > 0) return p;
+  return Math.round(dealBuy(it) * dealPtRate(it.market));
+}
+// 카드 결제할인가·적립 — 상세페이지에서 못 가져왔으면 아무것도 안 보인다
+function dealCardLine(it) {
+  const cp = Number(it.cardPrice) || 0, pt = dealPoint(it), price = Number(it.price) || 0;
+  let out = '';
+  if (cp > 0 && price > 0 && cp < price) {
+    const why = String(it.cardDesc || '').replace(/결제할인.*$/, '').trim();   // '스마일카드 10%' 만
+    out += `<span class="dealCard2">→ ${cp.toLocaleString()}원 <i>${esc(why || '카드할인')}</i></span>`;
+  }
+  if (pt > 0) out += `<span class="dealPoint2">적립 ${pt.toLocaleString()}원</span>`;
+  return out;
+}
+// 판매가는 카탈로그 최저가보다 10원 싸게 — 최저가 자리를 잡아야 실제로 팔린다
+function dealSellPrice(base, it) {
+  return Math.max(0, (Number(base) || 0) - (Number(it.naverUndercut) || 0));
+}
+// 마진은 앱에서 다시 계산한다 — 적립 설정이 사람마다 달라서 서버 값을 그대로 쓸 수 없다
+// 택배비가 드는가 — 위탁으로 보낼 수 있으면 안 든다(루크 기준 09-07).
+//  배수 1   → 딜 1개 그대로 위탁 → 0원
+//  배수 0.5 → 딜 2개를 주문해 손님에게 바로 위탁 → 0원 (내가 받아서 합치는 게 아니다)
+//  배수 4   → 4개들이를 받아 1개씩 쪼개 보내야 함 → 3,000원
+//  즉, 딜을 정수 개 주문해 카탈로그 구성과 딱 맞출 수 있으면 위탁이다.
+function dealShipFor(ratio) {
+  const r = Number(ratio) || 0;
+  if (!r) return DEAL_SHIP;
+  const k = 1 / r;                        // 카탈로그 1건을 채우는 데 필요한 딜 개수
+  return (Math.abs(k - Math.round(k)) < 0.01 && Math.round(k) >= 1) ? 0 : DEAL_SHIP;
+}
+function dealMarginOf(it, base, ratio) {
+  const r = Number(ratio) || 0;
+  const b = Number(base) || 0;
+  if (!r || b <= 0) return null;
+  const sell = Math.max(0, b - (Number(it.naverUndercut) || 0));
+  const net = Math.max(0, dealBuy(it) - dealPoint(it));
+  return Math.round(sell - net / r - dealShipFor(r) - sell * (dealFeePct() / 100));
+}
+function dealMargins(it) {
+  return { rep: dealMarginOf(it, it.naverRepPrice, it.ratioRep),
+           unit: dealMarginOf(it, it.naverUnitPrice, it.ratioUnit) };
+}
+function dealBestMargin(it) {
+  const m = dealMargins(it);
+  const xs = [m.rep, m.unit].filter(v => v !== null);
+  return xs.length ? Math.max.apply(null, xs) : null;
+}
+function dealToMargin(code) {
+  const it = (DEALS.items || []).find(x => String(x.goodscode) === String(code));
+  if (!it) return;
+  const price = Number(it.price) || 0, cp = Number(it.cardPrice) || 0;
+  const unit = Number(it.naverUnitPrice) || 0, rep = Number(it.naverRepPrice) || 0;
+  MG_PREFILL = {
+    name: it.name,
+    bundlePrice: dealBuy(it),
+    bundleQty: Number(it.dealQty) || 1,   // 딜 하나에 '네이버 1건'이 몇 개 들어있나
+    point: dealPoint(it),                 // 내 적립 설정 기준
+    feeRate: dealFeePct(),                // 할인 탭에서 정한 수수료 그대로
+    ship: dealShipFor(Number(it.ratioUnit) || Number(it.ratioRep) || 0),
+    sellQty: 1,                           // 한 번에 그 1건씩 판다
+    price: dealSellPrice(unit > 0 ? unit : rep, it)
+  };
+  go('margin');
+}
+// 네이버 가격비교와 견준 줄 — 먼저 뜨는 수량과 1개 단위 딱 둘만 본다
+function dealNaverLine(it) {
+  const rep = Number(it.naverRepPrice) || 0, repQ = Number(it.naverRepQty) || 0;
+  const unit = Number(it.naverUnitPrice) || 0;
+  if (rep <= 0 && unit <= 0) return '';
+  const m = dealMargins(it);
+  const money = (v) => (v > 0 ? '+' : '') + v.toLocaleString() + '원';
+  const row = (label, base, margin, qtyTxt) => {
+    let h = `<span class="dealNvPrice">${qtyTxt} 최저 <b>${base.toLocaleString()}원</b></span>`;
+    if (margin !== null) h += `<span class="${margin > 0 ? 'dealWin' : 'dealLose'}">${label} ${money(margin)}</span>`;
+    return `<div class="dealNvRow">${h}</div>`;
+  };
+  let out = '';
+  if (repQ === 1 || (rep > 0 && unit === rep)) {
+    out += row('낱개', rep, m.unit !== null ? m.unit : m.rep, '네이버 1개');
+  } else {
+    if (rep > 0) out += row('묶음', rep, m.rep, `네이버 ${repQ || '?'}개`);
+    if (unit > 0) out += row('낱개', unit, m.unit, '네이버 1개');
+  }
+  return `<div class="dealNaver">${out}</div>`;
 }
 
 
 function mgNum(id) { const el = $(id); return el ? Number(String(el.value).replace(/[^0-9.]/g, '')) || 0 : 0; }
 function mgInput() {
-  return { bundlePrice: mgNum('mgBundlePrice'), bundleQty: mgNum('mgBundleQty'),
+  return { bundlePrice: mgNum('mgBundlePrice'), point: mgNum('mgPoint'), bundleQty: mgNum('mgBundleQty'),
            sellQty: mgNum('mgSellQty'), price: mgNum('mgPrice'),
            ship: mgNum('mgShip'), feeRate: mgNum('mgFee') };
 }
@@ -1026,7 +1314,7 @@ window.mgRun = function () {
   const u = $('mgUnit');
   if (u) u.innerHTML = (v.bundlePrice && v.bundleQty)
     ? `<div class="mgUnit">개당 원가 <b>${wonFmt(r.unitCost)}원</b>
-         <span class="muted">${wonFmt(v.bundlePrice)}원 ÷ ${v.bundleQty}개</span></div>`
+         <span class="muted">${r.point ? `(${wonFmt(r.bundlePrice)} − 포인트 ${wonFmt(r.point)})` : `${wonFmt(r.bundlePrice)}원`} ÷ ${v.bundleQty}개</span></div>`
     : `<div class="mgUnit off">묶음 구매가와 수량을 넣으면 개당 원가가 나와요.</div>`;
 
   const box = $('mgOut'); if (!box) return;
@@ -1049,7 +1337,8 @@ window.mgRun = function () {
     <div class="mgTotal ${r.totalProfit > 0 ? '' : 'bad'}">
       <div class="mgTotHead">📦 이 묶음 하나를 다 팔면</div>
       <div class="mgTotRow"><span>판매 가능 건수</span><b>${r.sets}건</b></div>
-      <div class="mgTotRow"><span>들어간 돈 (묶음 구매가)</span><b>${wonFmt(r.bundlePrice)}원</b></div>
+      <div class="mgTotRow"><span>들어간 돈${r.point ? ' (포인트 뺀 실지출)' : ' (묶음 구매가)'}</span><b>${wonFmt(r.netBundle)}원</b></div>
+      ${r.point ? `<div class="mgTotRow"><span>ㄴ 포인트로 아낀 돈</span><b>${wonFmt(r.point)}원</b></div>` : ''}
       <div class="mgTotRow big"><span>총 이익</span><b>${wonFmt(r.totalProfit)}원</b></div>
       <div class="mgTotRow"><span>투자금 대비 수익률</span><b>${r.totalRoi.toFixed(1)}%</b></div>
       ${r.leftover ? `<div class="mgTotNote">※ ${r.leftover}개가 남아요. 개수를 딱 나눠떨어지게 잡으면 손해가 없어요.</div>` : ''}
@@ -1068,14 +1357,252 @@ window.mgTarget = function (t) {
 };
 window.mgApply = function (p) { const el = $('mgPrice'); if (el) { el.value = p; mgRun(); } };
 
+// ── 🏷️ 오늘의 할인 ───────────────────────────────────
+// 강사 PC의 딜워치 수집기가 모아 올린 오픈마켓 할인정보를 보여준다.
+// [알림 받기]를 켜면 앱을 꺼놔도 새 핫딜 때 폰으로 푸시가 온다(웹푸시).
+let DEALS = { items: [], updatedAt: '', filter: 'all', cat: 'all' };
+// 딜 카테고리 분류(PC와 동일 규칙) — category 필드 먼저, 없으면 상품명 낱말로.
+const DEAL_CAT_RULES = [
+  ['뷰티', /뷰티|화장품|메이크업|스킨|토너|세럼|에센스|앰플|크림|로션|마스크팩|시트마스크|클렌징|폼클|선크림|선블럭|선블록|자외선차단|틴트|립스틱|립밤|쿠션|파운데이션|섀도|마스카라|아이라이너|아이브로|향수|샴푸|린스|트리트먼트|헤어|바디워시|바디로션|스크럽|필링|미스트|괄사|프라이머|컨실러|네일|제모|왁싱|패치/i],
+  ['건강식품', /유산균|프로바이오틱스|비타민|오메가|루테인|홍삼|녹용|콜라겐|영양제|효소|밀크씨슬|코큐텐|큐텐|글루타치온|마그네슘|칼슘|철분|아연|프로폴리스|보스웰리아|크릴|멀티비타|엽산|비오틴|글루코사민|밀크시슬|가르시니아|다이어트|이너뷰티|건강기능/i],
+  ['식품', /간편식|즉석|라면|과자|스낵|음료|커피|녹차|홍차|우유|요거트|치즈|만두|국\b|탕\b|찌개|햇반|김치|반찬|소스|견과|아몬드|호두|떡\b|빵\b|시리얼|참치|햄\b|소시지|정육|한우|삼겹|수산|생선|새우|과일|채소|잡곡|계란|누룽지|건강즙|즙\b|사과|고구마|닭가슴살|도시락|밀키트/i],
+  ['생활', /세제|섬유유연제|화장지|물티슈|기저귀|생리대|주방|세척|청소|살균|소독|방향제|탈취|칫솔|치약|가글|면도|샤워|비누|손소독|락스|밀폐용기|위생|주방세제|수세미|고무장갑|건전지/i],
+];
+function dealCategoryOf(it) {
+  // 이름 우선(정확), 못 정하면 category 폴백. SSG '가공/건강식품' 합침라벨은 식품으로.
+  const n = String((it && it.name) || '');
+  for (const r of DEAL_CAT_RULES) if (r[1].test(n)) return r[0];
+  const c = String((it && it.category) || '');
+  if (/뷰티|화장/.test(c)) return '뷰티';
+  if (/건강기능|영양제|헬스/.test(c)) return '건강식품';
+  if (/가공|신선|식품|푸드|먹거리/.test(c)) return '식품';
+  if (/생활|리빙|주방/.test(c)) return '생활';
+  return '기타';
+}
+window.setDealCat = function (c) { DEALS.cat = c; renderDeals(); };
+// 이미 눌러본 제품 표시 — 어디까지 봤는지 알 수 있게(루크 요청). 수집분(updatedAt) 바뀌면 초기화.
+let _dealViewed = new Set(), _dealViewedAt = '';
+function loadDealViewed(at) {
+  try { const raw = JSON.parse(localStorage.getItem('dealViewed') || 'null');
+    if (raw && raw.at === at) { _dealViewed = new Set(raw.codes || []); _dealViewedAt = at; return; } } catch (_) {}
+  _dealViewed = new Set(); _dealViewedAt = at;
+}
+function markDealViewed(code) {
+  if (!code) return;
+  _dealViewed.add(String(code));
+  try { localStorage.setItem('dealViewed', JSON.stringify({ at: _dealViewedAt, codes: [..._dealViewed] })); } catch (_) {}
+}
+
+function pushReady() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !!window.PUSH_PUBKEY;
+}
+function b64ToU8(s) {
+  const pad = '='.repeat((4 - s.length % 4) % 4);
+  const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function pushCurrentSub() {
+  try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); }
+  catch (_) { return null; }
+}
+async function refreshPushBtn() {
+  const btn = $('dealPushBtn'); if (!btn) return;
+  if (!pushReady()) {
+    // 아이폰은 홈 화면에 설치해야 알림 지원 (사파리 탭에선 PushManager 없음)
+    btn.textContent = '📱 홈 화면에 설치하면 알림을 받을 수 있어요';
+    btn.disabled = true; btn.classList.add('ghost');
+    return;
+  }
+  const sub = await pushCurrentSub();
+  btn.disabled = false;
+  btn.textContent = sub ? '🔕 할인 알림 끄기' : '🔔 핫딜 알림 받기';
+  btn.classList.toggle('ghost', !!sub);
+}
+window.toggleDealPush = async function () {
+  const btn = $('dealPushBtn'); if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const cur = await pushCurrentSub();
+    if (cur) {                                             // 끄기
+      try { await api('pushSub', { sub: { endpoint: cur.endpoint }, off: true }); } catch (_) {}
+      await cur.unsubscribe();
+      toast('할인 알림을 껐어요');
+    } else {                                               // 켜기
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast('알림 권한을 허용해야 받을 수 있어요'); await refreshPushBtn(); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(window.PUSH_PUBKEY) });
+      const d = await api('pushSub', { sub: sub.toJSON() });
+      if (d && d.ok) toast('좋아요! 새 핫딜이 뜨면 알려드릴게요 🔔');
+      else { await sub.unsubscribe(); toast('저장에 실패했어요. 잠시 후 다시 시도해주세요.'); }
+    }
+  } catch (e) { toast('알림 설정에 실패했어요'); }
+  await refreshPushBtn();
+};
+window.setDealFilter = function (f) { DEALS.filter = f; renderDeals(); };
+window.openDeal = function (u) { if (u) window.open(u, '_blank', 'noopener'); };
+// 행을 누르면 어디로 갈지 고른다 — 오픈마켓 / 네이버 카탈로그 (루크 요청)
+window.openDealChoice = function (code) {
+  const it = (DEALS.items || []).find(x => String(x.goodscode) === String(code));
+  if (!it) return;
+  markDealViewed(code);
+  // 재렌더 없이 해당 행만 '봤음'으로(스크롤 유지) → 어디까지 봤는지 표시
+  try { const el = document.querySelector('.dealRow2[data-code="' + code + '"]'); if (el) el.classList.add('viewed'); } catch (_) {}
+  const nv = String(it.naverUrl || '').trim();
+  if (!nv) { window.openDeal(it.url); return; }
+  sheet(`<h3>어디로 갈까요?</h3>
+    <p class="muted" style="margin:6px 0 14px;line-height:1.6">${esc(String(it.name || '').slice(0, 60))}</p>
+    <button class="btn" onclick="closeSheet();openDeal('${esc(it.url)}')">🛒 ${esc(it.market || '오픈마켓')}에서 보기</button>
+    <button class="btn ghost" style="margin-top:8px" onclick="closeSheet();openDeal('${esc(nv)}')">🟢 네이버 가격비교에서 보기</button>
+    <button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">← 할인 목록으로 돌아가기</button>`);
+};
+// 캐시로 먼저 띄운 뒤 뒤에서 새로 받아온다. 내용이 그대로면 화면을 건드리지 않는다
+async function refreshDealsQuietly() {
+  let d = null;
+  try { d = await api('getDeals'); } catch (_) { return; }
+  if (!d || !d.ok) return;
+  if (!d.items || !d.items.length) return;        // 빈 목록(콜드 스타트)은 무시 — 보던 목록을 지우지 않는다
+  const changed = String(d.updatedAt || '') !== String(DEALS.updatedAt || '');
+  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || '';
+  if (changed && document.getElementById('dealListMark')) renderDeals();
+}
+
+async function viewDeals() {
+  // 한 번 받아둔 게 있으면 기다리지 않고 바로 보여준다(딜은 하루 한 번 모인다)
+  if (DEALS.items && DEALS.items.length) { renderDeals(); refreshDealsQuietly(); return; }
+  loading();
+  // 두뇌가 차가우면 404 오류나 빈 목록(딜 0개)이 오기도 한다 → 최대 3번까지 다시 시도
+  let d = null, err = '';
+  for (let i = 0; i < 3; i++) {
+    try { d = await api('getDeals'); }
+    catch (e) { err = (e && e.message) ? e.message : '연결이 불안정해요.'; d = null; }
+    if (d && d.ok && d.items && d.items.length) { err = ''; break; }   // 정상(딜 있음)
+    if (i < 2) { await new Promise(r => setTimeout(r, 1500)); }        // 오류·빈목록이면 잠시 뒤 재시도
+  }
+  if (err && (!d || !d.ok)) {
+    $('pane').innerHTML = `<div class="empty">${esc(err)}<br><br><button onclick="viewDeals()">다시 시도</button></div>`;
+    return;
+  }
+  if (!d || !d.ok) {
+    $('pane').innerHTML = `<div class="empty">아직 준비 중이에요.<br>강사가 할인정보를 채우면 여기에 표시됩니다.</div>`;
+    return;
+  }
+  if (!d.items || !d.items.length) {
+    // 두뇌가 차가워 빈 목록이 온 경우(보통 잠시 뒤 정상) — 보던 캐시가 있으면 지우지 않는다
+    if (DEALS.items && DEALS.items.length) { renderDeals(); return; }
+    $('pane').innerHTML = `<div class="empty">할인정보를 불러오는 중이에요.<br>잠시 뒤에 다시 눌러주세요.<br><br><button onclick="viewDeals()">다시 시도</button></div>`;
+    return;
+  }
+  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || '';
+  renderDeals();
+}
+function renderDeals() {
+  const items = DEALS.items;
+  const at = String(DEALS.updatedAt || '');
+  if (_dealViewedAt !== at) loadDealViewed(at);   // 수집분 바뀌면 본 기록 초기화
+  let h = `<div class="sec" style="margin-top:2px">🏷️ 오늘의 할인${DEALS.updatedAt ? ` <span class="muted" style="font-weight:400;font-size:12px">· ${esc(DEALS.updatedAt)}</span>` : ''}</div>
+    <button class="btn dealPush" id="dealPushBtn" onclick="toggleDealPush()">🔔 핫딜 알림 받기</button>`;
+  if (!items.length) {
+    h += `<div class="empty">아직 등록된 할인정보가 없어요.</div>`;
+    $('pane').innerHTML = h; refreshPushBtn(); return;
+  }
+  const plain = items.filter(x => !x.bundle);
+  const bundles = items.filter(x => x.bundle);
+  const nHot = plain.filter(x => x.hot).length, nLow = plain.filter(x => x.low).length;
+  const chip = (f, t) => `<button class="chip ${DEALS.filter === f ? 'on' : ''}" onclick="setDealFilter('${f}')">${t}</button>`;
+  h += `<span id="dealListMark" hidden></span>`;   // 아직 목록을 보고 있는지 판단용
+  const nWin = plain.filter(x => (dealBestMargin(x) || 0) > 0).length;
+  h += dealPtBar();
+  h += `<div class="chips" style="margin:10px 0">${chip('all', `전체 ${plain.length}`)}${chip('hot', `🔥 핫딜 ${nHot}`)}${nLow ? chip('low', `📉 최저가 ${nLow}`) : ''}${nWin ? chip('win', `💰 마진 ${nWin}`) : ''}${bundles.length ? chip('bundle', `📦 모음전 ${bundles.length}`) : ''}</div>`;
+  // 카테고리 필터 — 있는 것만(개수와 함께)
+  const CAT_ORDER = ['뷰티', '건강식품', '식품', '생활', '기타'];
+  const catCount = {};
+  plain.forEach(x => { const cc = dealCategoryOf(x); catCount[cc] = (catCount[cc] || 0) + 1; });
+  const catChip = (c, t) => `<button class="chip ${DEALS.cat === c ? 'on' : ''}" onclick="setDealCat('${c}')">${t}</button>`;
+  const catChips = [catChip('all', '전체')].concat(
+    CAT_ORDER.filter(c => catCount[c]).map(c => catChip(c, `${c} ${catCount[c]}`))).join('');
+  h += `<div class="chips" style="margin:-2px 0 10px">${catChips}</div>`;
+  let list = plain;
+  if (DEALS.filter === 'hot') list = plain.filter(x => x.hot);
+  if (DEALS.filter === 'low') list = plain.filter(x => x.low);
+  if (DEALS.filter === 'bundle') list = bundles;
+  if (DEALS.filter === 'win') list = plain.filter(x => (dealBestMargin(x) || 0) > 0)
+    .sort((a, b) => (dealBestMargin(b) || 0) - (dealBestMargin(a) || 0));
+  if (DEALS.cat !== 'all') list = list.filter(x => dealCategoryOf(x) === DEALS.cat);
+  h += list.slice(0, 100).map(it => `
+    <div class="card dealRow2${_dealViewed.has(String(it.goodscode)) ? ' viewed' : ''}" data-code="${esc(it.goodscode)}" onclick="openDealChoice('${esc(it.goodscode)}')">
+      <span class="dealPct2${it.discountPct ? '' : ' none'}">${it.discountPct ? it.discountPct + '%' : '-'}</span>
+      <div class="dealBody">
+        <div class="dealNm">${esc(it.name)}</div>
+        <div class="dealMt"><b>${it.price ? Number(it.price).toLocaleString() + '원' : ''}</b>${dealCardLine(it)}
+          ${it.market ? `<span class="tagMkt">${esc(it.market)}</span>` : ''}
+          ${it.low ? `<span class="tagLow">📉 3개월 최저가</span>` : (it.hot ? `<span class="tagHot">🔥 핫딜</span>` : '')}
+        </div>
+        ${dealNaverLine(it)}
+      </div>
+      <span class="dealAct">
+        <button class="dealCalc" onclick="event.stopPropagation();dealToMargin('${esc(it.goodscode)}')">💰</button>
+        <span class="dealArw">›</span>
+      </span>
+    </div>`).join('');
+  h += `<div class="card muted" style="font-size:12.5px;line-height:1.7;margin-top:10px">
+    가격·할인율은 수집 시점 기준이에요. 상품을 누르면 판매 페이지로 이동합니다.<br>
+    소싱·판매가 조사에 활용해보세요 💪</div>`;
+  $('pane').innerHTML = h;
+  refreshPushBtn();
+}
+
+// ── 미수금(마이너스 잔액) 안내 ────────────────────────
+//  앱을 켤 때 잔액이 마이너스면 화면 전체를 덮는 안내가 뜨고 '충전하기'로만 닫힌다.
+//  입금 확인은 담당자가 하니 시간이 걸린다 → 충전 페이지를 열어주기만 하면 바로 닫는다(루크 요청).
+function closeRechargeLock() {
+  const el = $('rechargeLock');
+  if (el) el.remove();
+}
+window.rechargeNow = function () {
+  closeRechargeLock();
+  try { openRecharge(); } catch (_) {}
+};
+function showRechargeLock(balance) {
+  if ($('rechargeLock')) return;
+  const amt = Math.abs(Number(balance) || 0).toLocaleString() + '원';
+  const d = document.createElement('div');
+  d.id = 'rechargeLock';
+  d.className = 'lockWrap';
+  d.innerHTML = `<div class="lockCard">
+      <div style="font-size:44px;line-height:1">💳</div>
+      <h3 style="margin:10px 0 6px">충전이 필요해요</h3>
+      <p class="muted" style="line-height:1.75;margin:0 0 8px">
+        지금 선불잔액이 <b style="color:#e0457e;font-size:17px">-${amt}</b> 예요.<br>
+        아직 내지 않은 배송비가 있어요. 충전해주시면 자동으로 정산됩니다. 🙏</p>
+      <p class="muted" style="font-size:12px;line-height:1.7;margin:0 0 14px">
+        충전 페이지를 여시면 이 안내는 바로 닫혀요.<br>
+        <b>매일 밤 10시</b>에 강사가 입금내역을 확인하고 잔액에 넣어드려요.<br>
+        그때까지는 잔액이 그대로 보일 수 있어요.</p>
+      <button class="btn" onclick="rechargeNow()">💳 충전하기</button>
+    </div>`;
+  document.body.appendChild(d);
+}
+async function checkNegativeBalance() {
+  if (!session || !session.userId || !BRAIN || !BRAIN.deliveryUrl) return;
+  let b = null;
+  try { b = await dlApi('getBalance'); } catch (_) { return; }
+  if (!b || !b.ok) return;
+  if (Number(b.balance || 0) < 0) showRechargeLock(b.balance);
+}
+
 // ── 시작 ─────────────────────────────────────────────
 (function boot() {
   warmUp();                       // 두뇌 미리 깨우기
   const s = store.get('session', null);
   if (s && s.userId) {
     session = s; enterMain();
+    checkNegativeBalance();          // 미수금이면 안내가 화면을 덮는다
+    if (location.hash === '#deals') go('deals');    // 푸시 알림 눌러 들어온 경우 → 할인 탭
     // 강사가 기수를 바꿨으면 따라잡는다 (바뀌면 화면도 새로 그림)
-    refreshSessionCohort().then(function (ch) { if (ch) enterMain(); });
+    refreshSessionCohort().then(function (ch) { if (ch && location.hash !== '#deals') enterMain(); });
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

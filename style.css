@@ -35,7 +35,7 @@ button{font:inherit;cursor:pointer}
 .who span{margin-left:8px;font-size:12px;color:#b9c4da}
 .iconBtn{background:transparent;border:0;color:#fff;font-size:18px;padding:6px 8px;border-radius:8px}
 main{padding:14px 14px calc(78px + var(--safe-b));max-width:640px;margin:0 auto}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(5,1fr);
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(6,1fr);
   background:#fff;border-top:1px solid var(--line);padding-bottom:var(--safe-b)}
 .tab{border:0;background:none;padding:9px 0 8px;font-size:11px;color:var(--muted);display:flex;
   flex-direction:column;align-items:center;gap:3px;font-weight:700}
@@ -172,6 +172,9 @@ textarea{resize:vertical;min-height:84px}
 /* 물류담당자 메시지 팝업 */
 .msgBox{margin:6px 0 4px;padding:15px 16px;border-radius:12px;background:#fff8f0;
   border-left:4px solid #e0a106;font-size:14.5px;line-height:1.8;color:#3d3428;white-space:pre-wrap}
+.msgBox b, .msgQ b{display:inline-block;margin-bottom:4px;font-size:11.5px;color:#8b8577;font-weight:800}
+.msgQ{margin:6px 0;padding:12px 15px;border-radius:12px;background:#f3f4f8;
+  border-left:4px solid #b9bcc9;font-size:13px;line-height:1.7;color:#55596a;white-space:pre-wrap}
 
 /* 주당 신청 제한 — 이미 신청한 주 */
 .chip.full{background:#f2f3f6;color:#a8adba;border-color:var(--line);text-decoration:line-through}
@@ -245,3 +248,58 @@ textarea{resize:vertical;min-height:84px}
 .photoChip button{border:0;background:#eef0f4;color:#6b7080;border-radius:999px;width:24px;height:24px;
   font-size:13px;line-height:1;cursor:pointer;flex:none}
 label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+
+/* ── 🏷️ 오늘의 할인 ── */
+.btn.dealPush{margin-top:2px}
+.chips .chip.on{background:var(--bloom-deep);color:#fff;border-color:var(--bloom-deep)}
+.dealRow2{display:flex;align-items:center;gap:11px;padding:12px 13px;margin-top:8px;cursor:pointer}
+.dealRow2.viewed{opacity:.5}                                   /* 이미 눌러본 제품 — 어디까지 봤는지 보이게 */
+.dealRow2.viewed .dealNm::before{content:'✓ ';color:#2e9e5b;font-weight:800}
+.dealPct2{flex:0 0 48px;text-align:center;font-size:15px;font-weight:800;color:#e0454f;background:#fdeeec;border-radius:10px;padding:9px 0}
+.dealPct2.none{color:#aaa;background:#f4f4f6}
+.dealBody{flex:1 1 auto;min-width:0}
+.dealNm{font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dealMt{display:flex;align-items:center;gap:7px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.dealMt b{color:var(--ink);font-size:13px}
+.tagMkt{background:#f1eef8;border-radius:5px;padding:1px 6px}
+.tagHot{color:#c0392b;background:#fdeeec;border-radius:5px;padding:1px 6px;font-weight:700}
+.tagLow{color:#1e7a46;background:#e8f6ee;border-radius:5px;padding:1px 6px;font-weight:700}
+.dealArw{flex:0 0 auto;color:#c5bed4;font-size:18px}
+/* 네이버 가격비교와 견준 줄 + 마진 계산기로 보내는 단추 */
+.dealNaver{display:flex;flex-direction:column;gap:2px;margin-top:5px;font-size:11.5px;color:#7c8596}
+.dealNvRow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dealNvPrice b{color:#2e7d52;font-weight:800}
+.dealWin{color:#1c7a4a;font-weight:800;background:#e8f6ee;border-radius:6px;padding:1px 7px}
+.dealLose{color:#98594f;font-weight:700;background:#f7eeec;border-radius:6px;padding:1px 7px}
+.dealAct{flex:0 0 auto;display:flex;align-items:center;gap:7px}
+.dealCalc{border:1px solid #e3dff0;background:#fff;border-radius:9px;padding:6px 9px;font-size:15px;line-height:1;cursor:pointer}
+.mgFrom{background:#eef6ff;border:1px solid #cfe3fb;color:#274b73;font-size:12.5px}
+.dealCard2{margin-left:6px;color:#c0356b;font-weight:800;font-size:12px}
+.dealCard2 i{font-style:normal;font-weight:600;color:#8b90a0;font-size:10.5px}
+.dealPoint2{margin-left:6px;color:#2f6fd0;font-weight:700;font-size:11.5px}
+.dealPt2{margin-left:6px;color:#2f6fd0;font-size:11px;font-weight:700}
+
+/* 미수금 안내 — 화면 전체를 덮고 '충전하기'로만 닫힌다 */
+.lockWrap{position:fixed;inset:0;z-index:9999;background:rgba(20,16,30,.72);
+  display:flex;align-items:center;justify-content:center;padding:22px}
+.lockCard{background:#fff;border-radius:18px;padding:26px 22px;max-width:340px;width:100%;
+  text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+.lockCard .btn{width:100%}
+
+/* 내 적립 설정 (오늘의 할인 위) */
+.dealPtBar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+.dealPtBar b{color:#7a4fd0;font-size:13px}
+.dealPtChk{display:inline-flex;align-items:center;gap:5px;color:var(--ink)}
+.dealPtChk input{margin:0;width:17px;height:17px}
+/* 마켓마다 적립 제도가 달라서 묶음으로 나눠 보여준다 (G마켓·옥션 / 화해) */
+.dealPtGrp{display:inline-flex;align-items:center;gap:9px;flex-wrap:wrap;padding:4px 9px;
+  background:#fff;border:1px solid #e9e3f5;border-radius:8px}
+.dealPtGrp>i{font-style:normal;color:#8b83a3;font-size:11px;white-space:nowrap}
+.dealPtGrp>i b{margin-left:3px}
+.dealFeeBox{display:inline-flex;align-items:center;gap:4px;color:var(--ink)}
+.dealFeeBox input{width:52px;padding:4px 7px;border:1px solid #e0dbee;border-radius:8px;font-size:13px;text-align:right}
+.dealPtNote{flex-basis:100%;font-size:11px;color:#9b93ab}
+/* 검수 전 입고 자체취소 단추 / 잠금 안내 (재고 내역) */
+.item .act{margin-top:7px;display:flex;justify-content:flex-end}
+.item .lock{font-size:11px;color:var(--muted)}
+.btn.sm{padding:5px 10px;font-size:12px;width:auto}

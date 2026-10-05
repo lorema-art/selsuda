@@ -9,6 +9,27 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+/* 할인 핫딜 웹푸시 — 딜워치 수집기(강사 PC)가 보낸다 */
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  e.waitUntil(self.registration.showNotification(d.title || '셀러들의 수다', {
+    body: d.body || '새 소식이 도착했어요',
+    icon: './icon.png', badge: './icon.png',
+    data: { url: d.url || './' }
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || './';
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) {
+      if ('focus' in c) { try { c.navigate(url); } catch (_) {} return c.focus(); }
+    }
+    return clients.openWindow(url);
+  }));
+});
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;                          // 앱스크립트 POST는 건드리지 않음

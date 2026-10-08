@@ -157,7 +157,7 @@ function enterMain() {
 let TABCFG = { hidden: new Set(), locked: new Set(), msg: null };
 // 시트의 탭 이름 → 폰 앱의 탭
 const TAB_MAP = {
-  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin'
+  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin', '구매대행': 'buy', '공동구매': 'gb'
 };
 function tabKeyOf(tab) {                     // 폰 탭 → 시트 이름(되찾기)
   for (const k in TAB_MAP) if (TAB_MAP[k] === tab) return k;
@@ -201,7 +201,7 @@ function go(tab) {
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, buy: viewBuy, gb: viewGroupBuy, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -222,6 +222,8 @@ async function viewHome() {
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
       <button onclick="go('ship')"><i>📦</i>재고·배송</button>
+      <button onclick="go('buy')"><i>🛒</i>구매대행</button>
+      <button onclick="go('gb')"><i>🤝</i>공동구매</button>
       <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
       <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
@@ -597,6 +599,7 @@ function renderShip() {
         <button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
   }
   if (DL.notice) h += `<div class="noticeBox" style="margin-bottom:12px">${nl2br(DL.notice)}</div>`;
+  h += `<button class="btn ghost" style="width:100%;margin:0 0 12px" onclick="mpInquiry()">💬 물류담당자에게 문의</button>`;
   h += `<div class="row" style="margin:0 0 12px">
       <button class="btn ${DL.tab === 'inv' ? '' : 'ghost'}" onclick="dlTab('inv')">📦 내 재고</button>
       <button class="btn ${DL.tab === 'ship' ? '' : 'ghost'}" onclick="dlTab('ship')">🚚 배송요청</button>
@@ -606,6 +609,299 @@ function renderShip() {
   if (DL.tab === 'ship') { try { dlInfo(); } catch (_) {} }
 }
 window.dlTab = (t) => { DL.tab = t; renderShip(); };
+
+// ── 현금영수증용 사업자등록번호 (구매대행·공동구매 공용, 한 번 적으면 기억) — PC·서버와 같은 검증 규칙 ──
+function bizNoFmt(v) {
+  const d = String(v || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length !== 10) return null;
+  const w = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+  let sum = 0; for (let i = 0; i < 9; i++) sum += Number(d[i]) * w[i];
+  sum += Math.floor(Number(d[8]) * 5 / 10);
+  if ((10 - sum % 10) % 10 !== Number(d[9])) return null;
+  return d.slice(0, 3) + '-' + d.slice(3, 5) + '-' + d.slice(5);
+}
+function bizNoTake(id) {
+  const el = $(id); if (!el) return '';
+  const f = bizNoFmt(el.value);
+  if (f === null) { alert('사업자등록번호가 올바르지 않아요.\n10자리 숫자를 다시 확인해주세요. (예: 123-45-67890)\n현금영수증이 필요 없으면 비워두세요.'); el.focus(); return undefined; }
+  el.value = f; if (f) store.set('bizNo', f); else store.del('bizNo'); return f;
+}
+const bizNoField = (id) => `<label class="lbl">🧾 사업자등록번호 <span class="muted" style="font-weight:400">(현금영수증용 · 선택)</span></label>
+  <input id="${id}" type="text" inputmode="numeric" maxlength="12" placeholder="000-00-00000" value="${esc(store.get('bizNo', '') || '')}">`;
+// ══════════ 🛒 구매대행 (모바일) — PC와 같은 규칙 ══════════
+//  신청 때 '구매요청 상한가 + 수수료(실제 구매가의 5%)' 만큼 쓸 수 있는 잔액 필요. 실제 차감은 코치 구매 후.
+//  용어: 구매가 = 코치가 산 금액 / 판매가 = 내가 네이버에서 파는 가격(마진 계산용)
+const M_PUR_DIRECT = '고객에게 바로 배송', M_PUR_INV = '내 재고로 입고';
+let PUR = { data: null, form: { product: '', link: '', option: '', qty: 1, max: '', method: M_PUR_INV, receiver: '', phone: '', addr: '', memo: '', sell: '', npct: '' } };
+async function loadPurchases() {
+  try { const d = await dlApi('getPurchases'); PUR.data = d && d.ok ? d : { error: (d && d.error) || '' }; }
+  catch (_) { PUR.data = { error: 'net' }; }
+}
+const purRate = () => ((PUR.data && PUR.data.feeRate) || 0.05);
+const purNeed = (max) => Math.ceil((Number(max) || 0) * (1 + purRate()));
+const mWon = (n) => Math.round(n).toLocaleString() + '원';
+// 개당 마진 = 판매가 − 구매가 − 판매가×네이버수수료 − 구매가×구매대행수수료
+function mpMargin(sell, cost, npct) {
+  const naver = sell * npct / 100, agent = cost * purRate();
+  const m = sell - cost - naver - agent;
+  return { naver, agent, m, rate: sell > 0 ? m / sell * 100 : 0 };
+}
+function purGrab() {
+  const g = (id) => String(($(id) || {}).value || '').trim();
+  if (!$('mpProduct')) return;
+  const f = PUR.form;
+  f.product = g('mpProduct'); f.link = g('mpLink'); f.option = g('mpOption');
+  f.qty = Number(g('mpQty')) || 0; f.max = g('mpMax').replace(/[^\d]/g, ''); f.memo = g('mpMemo');
+  f.sell = g('mpSell').replace(/[^\d]/g, ''); f.npct = g('mpNpct');
+  const m = document.querySelector('input[name="mpMethod"]:checked'); if (m) f.method = m.value;
+  if ($('mpRecv')) { f.receiver = g('mpRecv'); f.phone = g('mpPhone'); f.addr = g('mpAddr'); }
+}
+// 🛒 구매대행 = 재고·배송과 별도 탭(루크 10-07)
+async function viewBuy() {
+  loading();
+  await loadPurchases();
+  if (cur === 'buy') renderBuy();
+}
+function renderBuy() {
+  const d = PUR.data;
+  let h = '';
+  if (d && !d.error) {
+    const b = Number(d.balance || 0);
+    h += `<div class="card bal ${b < 0 ? 'neg' : ''}"><span>${b < 0 ? '미수금' : '선불 잔액'}</span>
+        <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
+  }
+  $('pane').innerHTML = h + panePur();
+  try { mpNeedHint(); } catch (_) {}
+}
+function mpItemMargin(x) {
+  const sell = Number(x.sellPrice || 0), qty = Number(x.qty || 0);
+  if (!(sell > 0) || !(qty > 0)) return '';
+  const npct = Number(x.naverPct || 0) || dealFeePct();
+  const done = x.charged > 0;
+  const cost = done ? (x.price + x.shipFee) / qty : x.max / qty;
+  const r = mpMargin(sell, cost, npct);
+  if (done) { r.m = sell - cost - r.naver - x.fee / qty; r.rate = r.m / sell * 100; }
+  return `<div class="m" style="color:${r.m < 0 ? '#c0392b' : '#1f6b3a'}">💰 ${done ? '실제' : '예상(상한가 기준)'} 마진 개당 <b>${mWon(r.m)}</b> (${r.rate.toFixed(1)}%) · 판매가 ${mWon(sell)}</div>`;
+}
+function panePur() {
+  const d = PUR.data;
+  if (!d) return `<div class="empty">불러오는 중…</div>`;
+  if (d.error) return `<div class="empty">${/unknown action/.test(d.error) ? '구매대행 기능이 아직 준비 중이에요.' : '불러오지 못했어요.'}</div>`;
+  const f = PUR.form, pct = Math.round(purRate() * 100), held = Number(d.held || 0);
+  const npct = f.npct !== '' ? f.npct : String(dealFeePct());
+  let h = `<div class="card purIntro">🛒 <b>코치가 대신 구매해드려요.</b><br>
+    · 수수료: <b>실제 구매가의 ${pct}%</b> · 결제: 선불잔액 차감<br>
+    · 신청하려면 <b>구매요청 상한가 + 수수료</b>만큼 잔액이 필요해요. 실제로는 산 금액만큼만 빠져요.
+    ${held > 0 ? `<br>· 진행 중 구매대행에 ${held.toLocaleString()}원 잡혀 있어요 → 쓸 수 있는 잔액 <b>${Number(d.available || 0).toLocaleString()}원</b>` : ''}</div>`;
+  h += `<div class="sec">✏️ 새 구매대행 신청</div><div class="card">
+    <label class="lbl">카탈로그명</label><input id="mpProduct" type="text" placeholder="예) 시카플라스트 B5 100ml" value="${esc(f.product)}">
+    <label class="lbl">구매처 링크 (있으면)</label><input id="mpLink" type="url" placeholder="https://..." value="${esc(f.link)}">
+    <label class="lbl">옵션 (선택)</label><input id="mpOption" type="text" value="${esc(f.option)}">
+    <label class="lbl">수량</label><input id="mpQty" type="number" inputmode="numeric" min="1" value="${f.qty || 1}" oninput="mpNeedHint()">
+    <label class="lbl">구매요청 상한가 (배송비 포함 · 수량 전체 · 원)</label>
+    <input id="mpMax" type="text" inputmode="numeric" placeholder="이 금액을 넘으면 사지 않아요" value="${esc(f.max)}" oninput="mpNeedHint()">
+    <div id="mpNeed" class="muted" style="font-size:12.5px;margin-top:6px"></div>
+    <label class="lbl">받는 방법</label>
+    <label style="display:block;margin:4px 0"><input type="radio" name="mpMethod" value="${M_PUR_INV}" ${f.method !== M_PUR_DIRECT ? 'checked' : ''} onchange="mpMethod()"> 📦 내 재고로 입고</label>
+    <label style="display:block;margin:4px 0"><input type="radio" name="mpMethod" value="${M_PUR_DIRECT}" ${f.method === M_PUR_DIRECT ? 'checked' : ''} onchange="mpMethod()"> 🚚 고객에게 바로 배송</label>
+    ${f.method === M_PUR_DIRECT ? `
+      <label class="lbl">받는사람</label><input id="mpRecv" type="text" value="${esc(f.receiver)}">
+      <label class="lbl">연락처</label><input id="mpPhone" type="tel" value="${esc(f.phone)}">
+      <label class="lbl">주소</label><input id="mpAddr" type="text" value="${esc(f.addr)}">` : ''}
+    <label class="lbl">요청 메모 (선택)</label><input id="mpMemo" type="text" placeholder="코치에게 전할 말" value="${esc(f.memo)}">
+    ${bizNoField('mpBiz')}
+    <div class="purCalc">
+      <b>💰 마진 미리 보기</b> <span class="muted" style="font-size:12px">(개당 · 선택)</span>
+      <label class="lbl">내 판매가 (개당 · 원)</label><input id="mpSell" type="text" inputmode="numeric" placeholder="네이버에 올릴 가격" value="${esc(f.sell)}" oninput="mpNeedHint()">
+      <label class="lbl">네이버 수수료 (%)</label><input id="mpNpct" type="number" inputmode="decimal" step="0.1" value="${esc(npct)}" oninput="mpNeedHint()">
+      <div id="mpCalcOut" style="margin-top:8px;font-size:13px"></div>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="mpBtn" onclick="mpSubmit()">🛒 구매대행 신청</button></div></div>`;
+  const items = d.items || [];
+  h += `<div class="sec">📋 내 구매대행 (${items.length})</div>`;
+  if (!items.length) h += `<div class="empty">아직 신청한 구매대행이 없어요.</div>`;
+  h += items.map(x => {
+    const money = x.charged > 0
+      ? `결제 ${x.charged.toLocaleString()}원 (구매가 ${x.price.toLocaleString()} + 배송비 ${x.shipFee.toLocaleString()} + 수수료 ${x.fee.toLocaleString()})`
+      : `상한가 ${x.max.toLocaleString()}원`;
+    const st = String(x.status || '접수');
+    const cls = /취소|품절/.test(st) ? 'cancel' : (/완료/.test(st) ? 'done' : (st === '구매중' ? 'ing' : 'wait'));
+    return `<div class="item"><div class="h"><b>${esc(x.product || x.link)}${x.option ? ' · ' + esc(x.option) : ''}</b><span class="purBadge ${cls}">${esc(st)}</span></div>
+      <div class="m">${esc(fmtDT(x.at))} · 수량 ${x.qty} · ${esc(x.method || '')}<br>${money}${x.order ? `<br>주문/송장 ${esc(x.order)}` : ''}</div>
+      ${mpItemMargin(x)}
+      ${x.bizNo ? `<div class="m">🧾 현금영수증 ${esc(x.bizNo)}</div>` : ''}
+      ${x.note ? `<div class="m" style="color:#4a3d7a">💬 코치: ${esc(x.note)}</div>` : ''}
+      ${x.canCancel ? `<div class="row" style="margin-top:8px"><button class="btn mini ghost" onclick="mpCancel('${esc(x.id)}')">신청 취소</button></div>` : ''}</div>`;
+  }).join('');
+  return h;
+}
+window.mpNeedHint = function () {
+  const el = $('mpNeed'), mx = $('mpMax'); if (!el || !mx) return;
+  const max = Number(String(mx.value || '').replace(/[^\d]/g, '')) || 0;
+  const qty = Math.max(1, Number(($('mpQty') || {}).value) || 1);
+  if (!max) el.textContent = '';
+  else {
+    const need = purNeed(max), avail = Number((PUR.data && PUR.data.available) || 0);
+    el.innerHTML = `필요 잔액 <b>${need.toLocaleString()}원</b>` + (need > avail ? ` · <span style="color:#c0392b">${(need - avail).toLocaleString()}원 부족</span>` : ' · ✅ 신청 가능');
+  }
+  const out = $('mpCalcOut'); if (!out) return;
+  const sell = Number(String(($('mpSell') || {}).value || '').replace(/[^\d]/g, '')) || 0;
+  const npct = Number(($('mpNpct') || {}).value) || 0;
+  if (!sell || !max) { out.innerHTML = `<span class="muted">판매가와 구매요청 상한가를 넣으면 개당 마진이 계산돼요.</span>`; return; }
+  const cost = max / qty, r = mpMargin(sell, cost, npct);
+  const row = (a, b, st) => `<div style="display:flex;justify-content:space-between;padding:2px 0;${st || ''}"><span>${a}</span><span>${b}</span></div>`;
+  out.innerHTML = row('판매가', mWon(sell)) + row(`− 구매가 (상한가 ÷ ${qty}개)`, mWon(cost)) +
+    row(`− 네이버 수수료 ${npct}%`, mWon(r.naver)) + row(`− 구매대행 수수료 ${Math.round(purRate() * 100)}%`, mWon(r.agent)) +
+    row('= 개당 마진', `${mWon(r.m)} (${r.rate.toFixed(1)}%)`, `border-top:1px solid #e3dcc0;margin-top:4px;padding-top:6px;font-weight:800;color:${r.m < 0 ? '#c0392b' : '#1f6b3a'}`) +
+    `<div class="muted" style="font-size:11.5px;margin-top:4px">상한가로 계산한 '최소' 마진이에요. 더 싸게 사면 늘어나요. (택배비 등 제외)</div>`;
+};
+window.mpMethod = function () { purGrab(); renderBuy(); };
+function mpShort(r) {
+  sheet(`<h3>💳 잔액을 먼저 충전해주세요</h3>
+    <p>구매대행은 <b>구매요청 상한가 + 수수료</b>만큼 잔액이 있어야 신청할 수 있어요.</p>
+    <div class="msgBox">필요 금액 <b>${Number(r.need || 0).toLocaleString()}원</b><br>현재 잔액 ${Number(r.balance || 0).toLocaleString()}원${Number(r.held || 0) > 0 ? ` (진행 중 ${Number(r.held).toLocaleString()}원 잡혀 있음)` : ''}<br>
+    <b style="color:#c0392b">${Number(r.short || 0).toLocaleString()}원 이상 충전</b> 후 다시 신청해주세요.</div>
+    <p class="muted" style="font-size:12.5px">매일 밤 10시에 입금 확인 후 잔액에 반영돼요. 입력한 내용은 남아 있어요.</p>
+    <div class="row">${BRAIN.rechargeUrl ? `<button class="btn" onclick="closeSheet(true);openRecharge()">💳 충전하기</button>` : ''}<button class="btn ghost" onclick="closeSheet(true)">돌아가기</button></div>`);
+}
+window.mpSubmit = async function () {
+  purGrab();
+  const f = PUR.form;
+  if (!f.product && !f.link) { alert('카탈로그명이나 구매처 링크를 적어주세요.'); return; }
+  if (!(f.qty >= 1)) { alert('수량을 확인해주세요.'); return; }
+  if (!(Number(f.max) >= 1000)) { alert('구매요청 상한가(배송비 포함, 수량 전체)를 적어주세요.'); return; }
+  if (f.method === M_PUR_DIRECT && (!f.receiver || !f.phone || !f.addr)) { alert('바로 배송은 받는사람·연락처·주소가 필요해요.'); return; }
+  const bizNo = bizNoTake('mpBiz'); if (bizNo === undefined) return;
+  const need = purNeed(f.max), avail = Number((PUR.data && PUR.data.available) || 0);
+  if (need > avail) { mpShort({ need, balance: PUR.data && PUR.data.balance, held: PUR.data && PUR.data.held, short: need - avail }); return; }
+  if (!confirm(`구매대행을 신청할까요?\n\n${f.product || f.link} × ${f.qty}\n구매요청 상한가 ${Number(f.max).toLocaleString()}원 (배송비 포함)\n수수료: 실제 구매가의 ${Math.round(purRate() * 100)}%`)) return;
+  const btn = $('mpBtn'); if (btn) { btn.disabled = true; btn.textContent = '신청 중…'; }
+  try {
+    const d = await dlApi('submitPurchase', { product: f.product, link: f.link, option: f.option, qty: f.qty, max: Number(f.max),
+      method: f.method, receiver: f.receiver, phone: f.phone, addr: f.addr, memo: f.memo,
+      sellPrice: Number(f.sell) || 0, naverPct: Number(f.npct) || 0, bizNo });
+    if (d && d.ok) {
+      PUR.form = { product: '', link: '', option: '', qty: 1, max: '', method: f.method, receiver: '', phone: '', addr: '', memo: '', sell: '', npct: f.npct };
+      toast('구매대행을 신청했어요 🛒');
+      await loadPurchases(); renderBuy();
+    } else if (d && d.blocked === '잔액부족') { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } mpShort(d); }
+    else { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } alert((d && d.error) || '신청하지 못했어요.'); }
+  } catch (_) { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } alert('연결 오류로 신청하지 못했어요.'); }
+};
+window.mpCancel = async function (id) {
+  if (!confirm('이 구매대행 신청을 취소할까요?')) return;
+  try {
+    const d = await dlApi('cancelPurchase', { id });
+    if (d && d.ok) { toast('신청을 취소했어요'); await loadPurchases(); renderBuy(); }
+    else alert((d && d.error) || '취소하지 못했어요.');
+  } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
+};
+
+// ══════════ 🤝 공동구매 (모바일) — PC와 같은 규칙 ══════════
+//  신청 즉시 선불잔액 차감 → 신청자에게만 제품 공개(서버가 신청자에게만 내려줌) → 내 재고로 입고.
+let GB = { data: null };
+async function viewGroupBuy() {
+  loading();
+  try { const d = await dlApi('getGroupBuys'); GB.data = d && d.ok ? d : { error: (d && d.error) || '' }; }
+  catch (_) { GB.data = { error: 'net' }; }
+  if (cur === 'gb') renderGroupBuy();
+}
+function renderGroupBuy() {
+  const d = GB.data || {};
+  if (d.error) { $('pane').innerHTML = `<div class="empty">${/unknown action/.test(d.error) ? '공동구매 기능이 아직 준비 중이에요.' : '불러오지 못했어요.'}<br><br><button class="btn mini" onclick="viewGroupBuy()">다시 시도</button></div>`; return; }
+  const b = Number(d.balance || 0);
+  let h = `<div class="card bal ${b < 0 ? 'neg' : ''}"><span>${b < 0 ? '미수금' : '선불 잔액'}</span>
+      <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
+  h += `<div class="card purIntro">🤝 <b>강사가 직접 소싱한 상품을 선착순으로 나눠드려요.</b><br>
+    · 신청하면 <b>필요 금액이 잔액에서 바로 차감</b>되고, 그때 제품이 공개돼요.<br>
+    · 산 물건은 <b>내 재고로 바로 들어와요</b> (바로 배송요청 가능).<br>
+    · 결제 후 취소는 강사에게 문의해주세요.</div>`;
+  h += `<div class="card">${bizNoField('gbBiz')}</div>`;
+  const items = d.items || [];
+  if (!items.length) h += `<div class="empty">지금 진행 중인 공동구매가 없어요.</div>`;
+  h += items.map(x => {
+    const won = (n) => Math.round(Number(n) || 0).toLocaleString() + '원';
+    const col = x.unitMargin < 0 ? '#c0392b' : '#1f6b3a';
+    const row = (a, v, st) => `<div style="display:flex;justify-content:space-between;padding:2px 0;${st || ''}"><span>${a}</span><span>${v}</span></div>`;
+    const badge = x.joined ? '<span class="purBadge done">✅ 참여 완료</span>' : (x.open ? '<span class="purBadge ing">모집중</span>' : `<span class="purBadge cancel">${esc(x.closedWhy || '마감')}</span>`);
+    let c = `<div class="item gbCard ${!x.open && !x.joined ? 'closed' : ''}"><div class="h"><b>${esc(x.category || '카테고리 미정')}</b>${badge}</div>
+      <div style="font-size:13px;margin-top:6px">
+        ${row('개당 공구가', `<b>${won(x.price)}</b>`)}${row('1인 수량', x.per + '개')}${row('필요 금액', `<b>${won(x.need)}</b>`)}
+        ${row('예상 판매가 (개당)', won(x.sell))}
+        ${row(`예상 마진 (개당 · 수수료 ${x.npct}%)`, won(x.unitMargin), `color:${col};border-top:1px solid #eee;margin-top:4px;padding-top:5px`)}
+        ${row(`<b>총 예상 마진 (${x.per}개)</b>`, `<b>${won(x.totalMargin)}</b>`, `color:${col}`)}
+      </div>
+      <div class="m" style="margin-top:6px">👥 ${x.seats > 0 ? `${x.used}/${x.seats}명${x.left > 0 ? ` · ${x.left}자리 남음` : ''}` : `${x.used}명 신청`}${x.until ? ` · ⏰ ${esc(x.until)}까지` : ''}</div>`;
+    if (x.joined) {
+      c += `<div class="gbReveal"><b>🎁 공개된 제품</b>
+        ${x.img ? `<img class="gbImg" src="${esc(x.img)}" alt="" onerror="this.remove()">` : ''}
+        <div style="font-weight:800;margin-top:4px">${esc(x.name)}${x.option ? ' · ' + esc(x.option) : ''}</div>
+        ${x.desc ? `<div class="m" style="margin-top:4px">${nl2br(x.desc).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')}</div>` : ''}
+        <div class="m" style="margin-top:6px">결제 ${won(x.paid)} · 내 재고에 ${x.qty}개 입고됨${x.bizNo ? `<br>🧾 현금영수증 ${esc(x.bizNo)}` : ''}</div></div>`;
+    } else {
+      c += `<div class="gbLock">🔒 어떤 제품인지는 신청한 분께만 공개돼요.</div>`;
+      if (x.open) c += `<div class="row" style="margin-top:8px"><button class="btn gbJoin" onclick="gbJoin('${esc(x.id)}')">🤝 선착순 신청 (${won(x.need)} 차감)</button></div>`;
+    }
+    return c + `</div>`;
+  }).join('');
+  $('pane').innerHTML = h;
+}
+function gbShort(r) {
+  const won = (n) => Math.round(Number(n) || 0).toLocaleString() + '원';
+  sheet(`<h3>💳 잔액을 먼저 충전해주세요</h3>
+    <p>공동구매는 신청할 때 필요 금액이 선불잔액에서 바로 빠져요.</p>
+    <div class="msgBox">필요 금액 <b>${won(r.need)}</b><br>쓸 수 있는 잔액 ${won((r.balance || 0) - (r.held || 0))}<br>
+    <b style="color:#c0392b">${won(r.short)} 이상 충전</b> 후 신청해주세요.</div>
+    <p class="muted" style="font-size:12.5px">선착순이라 충전하는 동안 마감될 수 있어요. 매일 밤 10시에 입금 확인 후 반영돼요.</p>
+    <div class="row">${BRAIN.rechargeUrl ? `<button class="btn" onclick="closeSheet(true);openRecharge()">💳 충전하기</button>` : ''}<button class="btn ghost" onclick="closeSheet(true)">돌아가기</button></div>`);
+}
+window.gbJoin = async function (id) {
+  const x = ((GB.data && GB.data.items) || []).find(i => i.id === id); if (!x) return;
+  const bizNo = bizNoTake('gbBiz'); if (bizNo === undefined) return;
+  const avail = Number((GB.data && GB.data.available) || 0);
+  if (x.need > avail) { gbShort({ need: x.need, balance: GB.data.balance, held: (GB.data.balance || 0) - avail, short: x.need - avail }); return; }
+  if (!confirm(`🤝 공동구매 신청\n\n${x.category}\n${x.per}개 × ${x.price.toLocaleString()}원 = ${x.need.toLocaleString()}원\n\n신청하면 잔액에서 바로 차감되고 제품이 공개돼요.\n결제 후 취소는 강사 문의로만 가능해요.`)) return;
+  document.querySelectorAll('.gbJoin').forEach(b => { b.disabled = true; });
+  try {
+    const d = await dlApi('joinGroupBuy', { id, bizNo });
+    if (d && d.ok) { toast('신청 완료! 제품이 공개됐어요 🎁'); viewGroupBuy(); }
+    else if (d && d.blocked === '잔액부족') { gbShort(d); renderGroupBuy(); }
+    else { alert((d && d.error) || '신청하지 못했어요.'); viewGroupBuy(); }
+  } catch (_) { alert('연결 오류로 신청하지 못했어요. 목록에서 다시 확인해주세요.'); viewGroupBuy(); }
+};
+
+// 💬 물류담당자 문의 (모바일) — PC '물류 문의'와 같은 두뇌(sendInquiry/getInquiries). 10-08 민원: 모바일에 문의 창이 없었다.
+let INQ = { sending: false, draft: '' };
+window.mpInquiry = async function () {
+  sheet(`<h3>💬 물류담당자 문의</h3><div class="muted" style="font-size:13px">불러오는 중…</div>`);
+  let list = [];
+  try { const d = await dlApi('getInquiries'); if (d && d.ok) list = d.items || []; } catch (_) {}
+  const thread = list.length ? list.slice().reverse().map(q => {
+    const done = String(q.reply || '').trim();
+    return `<div class="item"><div class="m" style="color:#333"><b>Q.</b> ${nl2br(q.message || '')}</div>
+      <div class="m">${esc(fmtDT(q.when || q.at))} · ${done ? '✅ 답변완료' : '⏳ 답변 대기'}</div>
+      ${done ? `<div class="msgBox" style="margin-top:6px"><b>답변</b><br>${nl2br(q.reply)}</div>` : ''}</div>`;
+  }).join('') : `<div class="empty">아직 남긴 문의가 없어요.</div>`;
+  sheet(`<h3>💬 물류담당자 문의</h3>
+    <p class="muted" style="font-size:12.5px;margin:4px 0 10px">배송·재고 관련 문의를 남기면 물류담당자가 확인 후 답변드려요.<br>(오전 11시 이전 문의는 당일 오전 / 오후에는 2~3시간 이내 답변)</p>
+    <textarea id="mpInqMsg" rows="3" style="width:100%;box-sizing:border-box" placeholder="예) 김수지님 배송요청 취소 부탁드려요">${esc(INQ.draft)}</textarea>
+    <div class="row" style="margin:8px 0 12px"><button class="btn" id="mpInqBtn" onclick="mpInquirySend()">문의 남기기</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>
+    <div style="max-height:45vh;overflow:auto">${thread}</div>`);
+};
+window.mpInquirySend = async function () {
+  if (INQ.sending) return;
+  const el = $('mpInqMsg'); const msg = String((el && el.value) || '').trim();
+  if (!msg) { alert('문의 내용을 입력해주세요.'); return; }
+  INQ.sending = true; INQ.draft = msg;
+  const b = $('mpInqBtn'); if (b) { b.disabled = true; b.textContent = '보내는 중…'; }
+  try {
+    const d = await dlApi('sendInquiry', { message: msg });
+    if (d && d.ok) { INQ.draft = ''; toast('문의를 남겼어요. 답변이 오면 알려드려요'); INQ.sending = false; mpInquiry(); return; }
+    alert((d && d.error) || '보내지 못했어요. 잠시 후 다시 시도해주세요.');
+  } catch (_) { alert('연결 오류로 보내지 못했어요.'); }
+  INQ.sending = false; if (b) { b.disabled = false; b.textContent = '문의 남기기'; }
+};
 
 // ➕ 입고 등록 (모바일) — 화면을 다시 그려도 입력값이 날아가지 않게 따로 들고 있는다
 let INB = { open: false, product: '', option: '', qty: 1, price: '', site: '', memo: '' };
@@ -871,8 +1167,10 @@ window.dlSend = async function () {
 function dlOneLine(t){ return String(t == null ? '' : t).split('\n')[0].trim(); }
 window.dlCancel = async function (at) {
   if (!confirm('이 배송요청을 취소할까요?\n\n차감된 배송비가 있으면 함께 환불돼요.')) return;
+  // ⚠ 줄 번호(row)도 같이 보낸다 — 시각만 보내면 서버 시트의 날짜 형식과 달라 못 찾았다(10-08 민원). PC와 동일.
+  const s = (DL.ship || []).find(x => x.at === at) || {};
   try {
-    const d = await dlApi('cancelShipping', { at });
+    const d = await dlApi('cancelShipping', { row: s.row, at });
     if (d && d.ok) { toast('취소했어요'); viewShip(); }
     else alert((d && d.error) || '취소하지 못했어요.');
   } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
@@ -1003,13 +1301,20 @@ function showNextMsg() {
   if (MSG.showing || !MSG.queue.length) return;
   const q = MSG.queue[0];
   MSG.showing = true;
-  const more = MSG.queue.length > 1 ? `<p class="muted" style="margin-top:10px">읽지 않은 메시지가 ${MSG.queue.length - 1}개 더 있어요.</p>` : '';
+  const more = MSG.queue.length > 1 ? `<p class="muted" style="margin-top:10px">읽지 않은 메시지가 ${MSG.queue.length - 1}개 더 있어요. <a href="#" onclick="ackAllMsg();return false">남은 메시지 모두 확인</a></p>` : '';
   const qMsg = String(q.message || '').trim();   // 어떤 문의에 대한 답변인지 원래 질문도 보여줌
   const qBox = qMsg ? `<div class="msgQ"><b>내 문의</b><br>${nl2br(qMsg)}</div>` : '';
   sheet(`<h3>💬 물류담당자 답변</h3>
     ${qBox}<div class="msgBox"><b>답변</b><br>${nl2br(q.reply || '')}</div>${more}
     <div class="row"><button class="btn" onclick="ackMsg()">확인했어요</button></div>`, true);
 }
+window.ackAllMsg = function () {   // 남은 메시지 한 번에 읽음 처리
+  const m = msgAck();
+  MSG.queue.forEach(q => { m[q.at] = String(q.reply || '').trim(); });
+  msgAckSave(m);
+  MSG.queue = []; MSG.showing = false;
+  closeSheet(true);
+};
 window.ackMsg = function () {
   const q = MSG.queue.shift();
   if (q) { const m = msgAck(); m[q.at] = String(q.reply || '').trim(); msgAckSave(m); }

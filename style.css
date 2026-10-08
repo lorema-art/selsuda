@@ -35,7 +35,7 @@ button{font:inherit;cursor:pointer}
 .who span{margin-left:8px;font-size:12px;color:#b9c4da}
 .iconBtn{background:transparent;border:0;color:#fff;font-size:18px;padding:6px 8px;border-radius:8px}
 main{padding:14px 14px calc(78px + var(--safe-b));max-width:640px;margin:0 auto}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(6,1fr);
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(8,1fr);
   background:#fff;border-top:1px solid var(--line);padding-bottom:var(--safe-b)}
 .tab{border:0;background:none;padding:9px 0 8px;font-size:11px;color:var(--muted);display:flex;
   flex-direction:column;align-items:center;gap:3px;font-weight:700}
@@ -303,3 +303,18 @@ label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:p
 .item .act{margin-top:7px;display:flex;justify-content:flex-end}
 .item .lock{font-size:11px;color:var(--muted)}
 .btn.sm{padding:5px 10px;font-size:12px;width:auto}
+
+/* 🛒 구매대행 */
+.purIntro{font-size:13px;line-height:1.75;background:#f6f2ff;border:1px solid #e2d8fb;color:#3d3360}
+.purBadge{flex:none;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.purBadge.wait{background:#eef1f6;color:#4a5468}
+.purBadge.ing{background:#fff3cd;color:#7a5a00}
+.purBadge.done{background:#e3f4e8;color:#1f6b3a}
+.purBadge.cancel{background:#f3f3f3;color:#8a8a8a;text-decoration:line-through}
+.purCalc{background:#fbfaf5;border:1px solid #ece6cf;border-radius:10px;padding:10px 12px;margin-top:14px}
+.gbCard.closed{opacity:.65}
+.gbLock{margin-top:8px;font-size:12.5px;color:#6b6480;background:#f4f2f8;border-radius:8px;padding:7px 10px}
+.gbReveal{margin-top:10px;background:#fffaf0;border:1px dashed #e8c77a;border-radius:10px;padding:10px 12px;font-size:13px}
+.gbImg{display:block;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px}
+.gbJoin{width:100%}
+.tab{letter-spacing:-.5px;font-size:10px}

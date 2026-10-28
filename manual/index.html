@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>셀수다 자동등록 — 사용 설명서</title>
+<style>
+  :root{
+    --g:#03a84c; --gl:#eafaf2; --b:#1a6fd4; --bl:#eaf2fe;
+    --r:#d93025; --rl:#fdeef1; --ink:#1b1f24; --sub:#4a5260; --line:#dfe3ea;
+    --y:#fff8e1; --yb:#f0b429;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#f4f6f9;color:var(--ink);
+       font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-serif;
+       font-size:20px; line-height:1.85; letter-spacing:-.2px;}
+  .wrap{max-width:820px;margin:0 auto;padding:0 18px 80px}
+  header{background:var(--g);color:#fff;padding:34px 18px 30px;text-align:center}
+  header h1{margin:0;font-size:34px;line-height:1.35}
+  header p{margin:10px 0 0;font-size:19px;opacity:.95}
+  .big{font-size:22px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px 22px;margin:22px 0;
+        box-shadow:0 1px 3px rgba(20,30,50,.06)}
+  h2{font-size:28px;margin:34px 0 10px;padding-left:14px;border-left:8px solid var(--g);line-height:1.4}
+  h3{font-size:23px;margin:26px 0 8px}
+  .step{display:flex;gap:14px;align-items:flex-start;margin:18px 0}
+  .num{flex:none;width:44px;height:44px;border-radius:50%;background:var(--g);color:#fff;
+       font-size:24px;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .num.r{background:var(--r)} .num.b{background:var(--b)}
+  .step > div{padding-top:5px}
+  img{max-width:100%;height:auto;display:block;margin:16px auto;border:1px solid var(--line);
+      border-radius:12px;box-shadow:0 2px 10px rgba(20,30,50,.10)}
+  .cap{text-align:center;color:var(--sub);font-size:17px;margin:-6px 0 18px}
+  .tip{background:var(--gl);border-left:8px solid var(--g);border-radius:10px;padding:16px 18px;margin:18px 0}
+  .warn{background:var(--y);border-left:8px solid var(--yb);border-radius:10px;padding:16px 18px;margin:18px 0}
+  .stop{background:var(--rl);border-left:8px solid var(--r);border-radius:10px;padding:16px 18px;margin:18px 0}
+  .key{display:inline-block;background:#eef1f6;border:1px solid var(--line);border-radius:8px;
+       padding:2px 10px;font-weight:700;white-space:nowrap}
+  .green{color:var(--g);font-weight:800}
+  .red{color:var(--r);font-weight:800}
+  .blue{color:var(--b);font-weight:800}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:19px}
+  th,td{border:1px solid var(--line);padding:12px 12px;text-align:left;vertical-align:top}
+  th{background:#f2f5f9;width:40%}
+  ul,ol{padding-left:28px;margin:10px 0}
+  li{margin:9px 0}
+  .toc a{display:block;padding:13px 6px;border-bottom:1px dashed var(--line);color:var(--ink);
+         text-decoration:none;font-weight:700}
+  .toc a:last-child{border-bottom:0}
+  .toc a:hover{color:var(--g)}
+  footer{text-align:center;color:var(--sub);font-size:17px;padding:30px 18px}
+  .q{font-weight:800;color:var(--b);margin-top:22px}
+  @media (max-width:520px){
+    body{font-size:19px} header h1{font-size:28px} h2{font-size:24px} .card{padding:18px 15px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛒 셀수다 자동등록<br>사용 설명서</h1>
+  <p>상품을 자동으로 올리는 방법 — 사진 보고 따라 하기</p>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <p class="big" style="margin-top:0">이 설명서는 <b>프로그램을 이미 설치한 분</b>이
+    <b>매일 상품을 올릴 때</b> 보는 설명서입니다.</p>
+    <p>처음 설치와 키 입력은 <b>[셀수다] 자동등록 설치 안내</b>를 먼저 보세요.</p>
+    <div class="toc" style="margin-top:14px">
+      <a href="#a">1. 프로그램 열기</a>
+      <a href="#b">2. 화면 둘러보기 (어디를 누르나요)</a>
+      <a href="#c">3. 상품 담기</a>
+      <a href="#d">4. 등록 시작하기</a>
+      <a href="#e">5. 끝났는지 확인하기</a>
+      <a href="#f">6. 중간에 물어보는 것들</a>
+      <a href="#g">7. 실패한 상품 다시 올리기</a>
+      <a href="#h">8. 쿠팡 상품 올리기</a>
+      <a href="#i">9. 이럴 땐 이렇게 (문제 해결)</a>
+    </div>
+  </div>
+
+  <h2 id="a">1. 프로그램 열기</h2>
+  <div class="card">
+    <div class="step"><div class="num">1</div><div>
+      <b>크롬</b>을 엽니다. (바탕화면의 동그란 크롬 아이콘)
+    </div></div>
+    <div class="step"><div class="num">2</div><div>
+      크롬 <b>오른쪽 위</b>에 있는 <span class="key">🧩 퍼즐 모양</span> 을 누릅니다.
+    </div></div>
+    <div class="step"><div class="num">3</div><div>
+      목록에서 <span class="key">🛒 [셀수다] 자동등록 프로그램</span> 을 누릅니다.
+    </div></div>
+    <div class="tip">
+      <b>매번 찾기 번거로우시면</b> — 퍼즐 모양을 누른 뒤 프로그램 이름 옆의
+      <b>압정(📌)</b>을 한 번 눌러 두세요. 그러면 크롬 오른쪽 위에
+      <b>🛒 그림이 항상 보여서</b> 바로 누를 수 있습니다.
+    </div>
+    <div class="warn">
+      프로그램 창은 <b>따로 뜨는 작은 창</b>입니다.
+      등록이 끝날 때까지 <b>이 창을 닫지 마세요.</b>
+    </div>
+  </div>
+
+  <h2 id="b">2. 화면 둘러보기 — 어디를 누르나요</h2>
+  <div class="card">
+    <img src="images/01_main.png" alt="프로그램 전체 화면">
+    <p class="cap">프로그램을 열면 이런 화면이 나옵니다</p>
+    <table>
+      <tr><th>① 자동상품등록</th><td>지금 보고 있는 상품 <b>한 개</b>를 바로 올립니다.</td></tr>
+      <tr><th>② 판매처 링크 직접 지정</th><td>쿠팡처럼 <b>다른 사이트 상품</b>을 올릴 때 주소를 넣는 칸입니다. (8번 참고)</td></tr>
+      <tr><th>③ 이 카탈로그 담기</th><td>상품을 <b>목록에 담아 둡니다.</b> 여러 개를 모아서 한 번에 올릴 때 씁니다.</td></tr>
+      <tr><th>④ 대량등록 시작</th><td>담아 둔 상품을 <b>전부 자동으로</b> 올립니다.</td></tr>
+      <tr><th>⑤ 아래쪽 초록 글씨 3개</th><td>준비가 다 됐다는 표시입니다. <b>세 개 모두 초록색</b>이어야 등록이 됩니다.</td></tr>
+    </table>
+    <div class="stop">
+      <b>⑤가 빨간색이면 등록이 안 됩니다.</b><br>
+      · <b>백엔드 연결 안 됨</b> → 9번 문제 해결을 보세요.<br>
+      · <b>AI키 필요 / 네이버키 필요</b> → 설치 안내를 보고 키를 넣어 주세요.
+    </div>
+  </div>
+
+  <h2 id="c">3. 상품 담기</h2>
+  <div class="card">
+    <div class="step"><div class="num">1</div><div>
+      크롬에서 <b>네이버 쇼핑</b>에 들어가 올리고 싶은 상품을 찾습니다.
+    </div></div>
+    <div class="step"><div class="num">2</div><div>
+      <b>가격비교 페이지</b>를 엽니다.<br>
+      <span style="color:var(--sub)">주소창이 <b>search.shopping.naver.com/catalog/…</b> 로 시작하면 맞습니다.</span>
+    </div></div>
+    <div class="step"><div class="num">3</div><div>
+      그 화면을 <b>켜 둔 채로</b> 프로그램을 열고 <span class="key">➕ 이 카탈로그 담기</span> 를 누릅니다.
+    </div></div>
+    <img src="images/02_grab.png" alt="상품을 담은 화면">
+    <p class="cap">담기면 이렇게 나옵니다</p>
+    <table>
+      <tr><th>① 담긴 목록</th><td>담은 상품 주소가 쌓입니다. <b>담긴 목록 2개</b> 처럼 개수가 보입니다.</td></tr>
+      <tr><th>② 담긴 상품 이름</th><td><b>무엇이 담겼는지</b> 상품 이름이 나옵니다. 엉뚱한 상품이면 바로 아실 수 있습니다.</td></tr>
+    </table>
+    <div class="tip">
+      <b>여러 개를 담으세요.</b> 다음 상품 페이지로 이동해서 또 <b>담기</b>를 누르면 계속 쌓입니다.<br>
+      한 번에 <b>20~30개</b>가 적당합니다. 너무 많이 담으면 네이버가 잠시 막습니다.
+    </div>
+    <div class="warn">
+      <b>가격비교 페이지가 아니면 담기지 않습니다.</b><br>
+      "지금 보고 있는 페이지는 가격비교 페이지가 아닙니다" 라고 나오면,
+      가격비교 페이지를 연 다음에 다시 눌러 주세요.
+    </div>
+  </div>
+
+  <h2 id="d">4. 등록 시작하기</h2>
+  <div class="card">
+    <div class="step"><div class="num b">1</div><div>
+      다 담으셨으면 <span class="key">📋 대량등록 시작</span> 을 누릅니다.
+    </div></div>
+    <div class="step"><div class="num b">2</div><div>
+      <b>기다립니다.</b> 상품 하나에 <b>1~3분</b> 걸립니다.<br>
+      20개면 30분~1시간 정도 걸립니다.
+    </div></div>
+    <img src="images/03_running.png" alt="등록이 진행 중인 화면">
+    <p class="cap">진행 중에는 지금 무엇을 하는 중인지 보여 줍니다</p>
+    <div class="stop">
+      <b>진행 중에 하지 마세요</b><br>
+      · 프로그램 창을 닫지 마세요<br>
+      · 크롬을 끄지 마세요<br>
+      · 컴퓨터를 끄거나 잠자기로 두지 마세요<br>
+      <span style="color:var(--sub)">중간에 끊기면 AI 비용이 다시 들 수 있습니다.</span>
+    </div>
+    <div class="tip">
+      기다리는 동안 <b>다른 일을 하셔도 됩니다.</b> 창만 닫지 않으면 됩니다.<br>
+      화면이 멈춘 것처럼 보여도 <b>시간(경과)이 올라가고 있으면 정상</b>입니다.
+    </div>
+  </div>
+
+  <h2 id="e">5. 끝났는지 확인하기</h2>
+  <div class="card">
+    <img src="images/04_done.png" alt="등록이 끝난 화면">
+    <p class="cap">다 끝나면 결과를 알려 줍니다</p>
+    <ul>
+      <li><b>완료 2 / 실패 0</b> — 두 개 다 올라갔다는 뜻입니다.</li>
+      <li>담긴 목록은 <b>자동으로 비워집니다.</b> (올라간 상품은 빠집니다)</li>
+      <li>실제 상품은 <b>스마트스토어센터 → 상품관리</b> 에서 보입니다.</li>
+    </ul>
+    <div class="warn">
+      <b>판매중지로 올라가는 상품이 있습니다.</b><br>
+      상세정보나 고시정보가 부족한 상품은 <b>일부러 판매중지</b>로 올립니다.
+      내용을 채운 뒤 스마트스토어센터에서 <b>판매중</b>으로 바꿔 주세요.
+    </div>
+  </div>
+
+  <h2 id="f">6. 중간에 물어보는 것들</h2>
+  <div class="card">
+    <p>등록이 다 끝난 뒤, 프로그램이 <b>두 가지를 물어볼 수 있습니다.</b>
+       (등록 중간에는 묻지 않으니 자리를 비우셔도 됩니다)</p>
+
+    <h3>① 카테고리를 골라 주세요</h3>
+    <p>프로그램이 카테고리를 못 찾은 상품입니다. 창이 뜨면 <b>낱말로 찾아</b> 고르시면 됩니다.</p>
+    <ul>
+      <li>예) <b>바디워시</b>, <b>잡곡</b>, <b>핸드크림</b> 처럼 짧게 넣고 찾기</li>
+      <li>찾는 것이 없으면 <b>번호나 전체 경로를 직접</b> 넣을 수도 있습니다</li>
+      <li>비워 두고 넘기면 그 상품만 등록되지 않습니다 (AI 비용은 들지 않습니다)</li>
+    </ul>
+
+    <h3>② KC 인증번호를 넣어 주세요</h3>
+    <p>전자제품·유아용품처럼 <b>인증번호가 꼭 필요한 상품</b>입니다.</p>
+    <ul>
+      <li>제품 포장이나 상세페이지에 적힌 <b>인증번호</b>를 넣어 주세요</li>
+      <li>모르면 <b>공급처에 문의</b>하시고, 그 전까지는 비워 두셔도 됩니다</li>
+      <li>비워 둬도 <b>보관함에 남아 있어서</b>, 나중에 번호만 넣으면 바로 등록됩니다</li>
+    </ul>
+    <div class="stop">
+      <b>인증번호는 지어내면 안 됩니다.</b> KC·어린이제품·생활화학 인증은 법으로 정해진 의무라,
+      잘못 넣으면 판매자가 책임을 집니다. 확실하지 않으면 비워 두세요.
+    </div>
+  </div>
+
+  <h2 id="g">7. 실패한 상품 다시 올리기</h2>
+  <div class="card">
+    <img src="images/05_vault.png" alt="등록 실패 보관함">
+    <p class="cap">실패한 상품은 보관함에 남습니다</p>
+    <p>등록이 실패해도 <b>AI가 만든 사진과 상세내용은 보관</b>됩니다.
+       문제를 고친 뒤 <b>[▶ 이어서 등록]</b> 을 누르면
+       <b>AI 비용 없이</b> 다시 올립니다.</p>
+    <table>
+      <tr><th>KC 인증번호만 넣으면 등록됩니다</th>
+          <td><b>[KC 인증번호 입력하기]</b> 를 누르고 번호를 넣어 주세요.</td></tr>
+      <tr><th>허용되지 않은 IP</th>
+          <td>인터넷 주소가 바뀐 것입니다. 9번 문제 해결을 보세요.</td></tr>
+      <tr><th>등록권한이 있어야 판매 가능</th>
+          <td>건강기능식품 등은 스마트스토어센터에서 <b>판매권한 신청</b>을 먼저 하셔야 합니다.</td></tr>
+    </table>
+    <div class="tip">
+      보관함은 <b>프로그램을 껐다 켜도 남아 있습니다.</b> 급하지 않으면 나중에 하셔도 됩니다.
+    </div>
+  </div>
+
+  <h2 id="h">8. 쿠팡 상품 올리기</h2>
+  <div class="card">
+    <img src="images/06_coupang.png" alt="판매처 링크 직접 지정 칸에 쿠팡 주소를 넣은 모습">
+    <p class="cap">쿠팡 상품 주소를 이 칸에 넣습니다</p>
+    <div class="step"><div class="num">1</div><div>
+      쿠팡에서 상품 페이지를 열고 <b>주소창의 주소를 복사</b>합니다.
+    </div></div>
+    <div class="step"><div class="num">2</div><div>
+      프로그램의 <b>판매처 링크 직접 지정</b> 칸에 <b>붙여넣기</b> 합니다.
+    </div></div>
+    <div class="step"><div class="num">3</div><div>
+      <span class="key">🛒 자동상품등록</span> 을 누릅니다.
+    </div></div>
+    <div class="warn">
+      <b>쿠팡 상품은 카테고리를 직접 고르셔야 합니다.</b>
+      쿠팡 카테고리와 네이버 카테고리가 다르기 때문입니다.<br>
+      또 <b>고른 옵션 하나</b>로만 등록됩니다.
+    </div>
+    <div class="tip">
+      가격은 <b>쿠팡에서 실제 판매되는 가격</b>을 읽어옵니다.
+      품절이거나 가격이 안 보이면 <b>등록하지 않고</b> 알려 드립니다.
+    </div>
+  </div>
+
+  <h2 id="i">9. 이럴 땐 이렇게 — 문제 해결</h2>
+  <div class="card">
+    <p class="q">Q. 아래쪽에 "백엔드 연결 안 됨" 이라고 빨갛게 나와요</p>
+    <p>프로그램의 <b>엔진</b>이 꺼진 것입니다. 이렇게 켜 주세요.</p>
+    <ol>
+      <li>바탕화면에서 <b>내 PC</b> → <b>C 드라이브(로컬 디스크 C:)</b> 를 엽니다</li>
+      <li><b>셀수다자동등록</b> 폴더 → <b>백엔드</b> 폴더를 엽니다</li>
+      <li><b>설치(최초 한번)</b> 파일을 <b>두 번 클릭</b>합니다</li>
+      <li>검은 창이 뜨면 <b>끄지 말고 그대로</b> 두세요</li>
+      <li>프로그램 창을 닫았다 다시 열면 <b>초록색</b>으로 바뀝니다</li>
+    </ol>
+
+    <p class="q">Q. "허용되지 않은 IP" 라고 나와요</p>
+    <p>인터넷 주소가 바뀌면 네이버가 막습니다. 프로그램 화면에 <b>지금 내 IP</b>가 나옵니다.</p>
+    <ol>
+      <li>네이버 <b>커머스API센터</b> 에 접속합니다</li>
+      <li><b>애플리케이션 관리</b> 에서 화면에 나온 IP를 <b>추가</b>합니다</li>
+      <li>10분쯤 뒤에 다시 시도합니다</li>
+    </ol>
+
+    <p class="q">Q. "AI 크레딧을 다 썼습니다" 라고 나와요</p>
+    <p>AI 사용료가 떨어진 것입니다. <b>aistudio.google.com</b> → 왼쪽 아래 <b>Billing(결제)</b>
+       에서 충전하시면 됩니다. 충전 후 몇 분 뒤에 다시 하세요.</p>
+
+    <p class="q">Q. "네이버가 쇼핑 접속을 일시적으로 막았습니다" 라고 나와요</p>
+    <p>한 번에 너무 많이 하면 네이버가 잠시 막습니다. <b>프로그램 잘못이 아닙니다.</b></p>
+    <ul>
+      <li><b>30분쯤 쉬었다가</b> 다시 [대량등록 시작] 을 누르세요</li>
+      <li>담아둔 목록은 <b>그대로 남아 있습니다</b></li>
+      <li>다음부터는 <b>20~30개씩</b> 나눠서 해 주세요</li>
+    </ul>
+
+    <p class="q">Q. 몇 분째 화면이 그대로예요</p>
+    <p>상품 하나에 1~3분 걸립니다. 화면의 <b>경과 시간</b>이 올라가고 있으면 정상입니다.
+       15분이 넘으면 프로그램이 알아서 멈추고 무엇을 해야 할지 알려 드립니다.</p>
+
+    <p class="q">Q. 등록한 상품이 판매중지로 되어 있어요</p>
+    <p>상세내용이나 고시정보가 부족하면 <b>일부러 판매중지</b>로 올립니다.
+       그대로 팔면 손님이 정보를 못 보기 때문입니다.
+       스마트스토어센터에서 내용을 채운 뒤 <b>판매중</b>으로 바꿔 주세요.</p>
+
+    <p class="q">Q. 프로그램이 업데이트됐다고 나와요</p>
+    <p>구글드라이브에서 <b>새 설치파일</b>을 받아 실행하시면 됩니다.
+       <b>키와 로그인은 그대로 유지</b>되니 다시 넣지 않으셔도 됩니다.</p>
+  </div>
+
+  <div class="card" style="background:var(--gl);border-color:#bfe8d2">
+    <h3 style="margin-top:0">🙋 그래도 안 되면</h3>
+    <p style="margin-bottom:6px">화면에 나온 <b>글씨를 그대로 사진 찍어</b> 보내 주세요.
+       어느 단계에서 멈췄는지 화면에 나오기 때문에, 그 사진만 있으면 원인을 찾을 수 있습니다.</p>
+  </div>
+
+</div>
+
+<footer>
+  셀수다 자동등록 사용 설명서 · 2026년 10월 기준 (프로그램 v220)<br>
+  화면은 업데이트에 따라 조금씩 달라질 수 있습니다.
+</footer>
+
+</body>
+</html>

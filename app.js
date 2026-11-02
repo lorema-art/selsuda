@@ -35,7 +35,8 @@ async function call(url, action, extra, _retry) {
     });
     return await res.json();
   } catch (e) {
-    if (!_retry) return call(url, action, extra, true);   // 한 번 더
+    // 다시 보내기는 조회(get·check)만 — 저장 요청을 다시 보내면 두 번 등록될 수 있다(10-15)
+    if (!_retry && /^(get|check)/.test(String(action))) return call(url, action, extra, true);
     throw e;
   } finally { clearTimeout(timer); }
 }
@@ -147,6 +148,8 @@ function enterMain() {
   applyTabConfig();                    // 기수별로 숨긴/잠근 탭 반영 (PC 앱과 같은 시트 설정)
   try { showInstallBar(); } catch (_) {}
   setTimeout(() => { try { checkLogisticsMessages(); } catch (_) {} }, 1200);
+  setTimeout(() => { try { checkPriceAlertsM(); } catch (_) {} }, 6000);   // 📈 새 가격 알림
+  startOfficeWatchM();                 // 🏢 온라인 사무실 열리면 입장 팝업
 }
 
 // ── 기수별 탭 설정 (숨김 / 잠금) ──────────────────────
@@ -157,7 +160,7 @@ function enterMain() {
 let TABCFG = { hidden: new Set(), locked: new Set(), msg: null };
 // 시트의 탭 이름 → 폰 앱의 탭
 const TAB_MAP = {
-  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin', '구매대행': 'buy', '공동구매': 'gb'
+  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin', '구매대행': 'buy', '공동구매': 'gb', '건의사항': 'sg', '가격추이': 'pt', '온라인사무실': 'office', '소싱주의': 'warn'
 };
 function tabKeyOf(tab) {                     // 폰 탭 → 시트 이름(되찾기)
   for (const k in TAB_MAP) if (TAB_MAP[k] === tab) return k;
@@ -201,7 +204,7 @@ function go(tab) {
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, buy: viewBuy, gb: viewGroupBuy, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, buy: viewBuy, gb: viewGroupBuy, sg: viewSuggest, pt: viewPriceTrend, office: viewOffice, warn: viewSWarn, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -219,15 +222,19 @@ async function viewHome() {
       <p>${esc(session.cohort || '')}</p>
     </div>
     <div class="quick">
+      <button onclick="go('office')"><i>🏢</i>온라인 사무실</button>
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
       <button onclick="go('ship')"><i>📦</i>재고·배송</button>
       <button onclick="go('buy')"><i>🛒</i>구매대행</button>
       <button onclick="go('gb')"><i>🤝</i>공동구매</button>
+      <button onclick="go('pt')"><i>📈</i>가격추이</button>
+      <button onclick="go('warn')"><i>🚫</i>소싱주의</button>
+      <button onclick="go('sg')"><i>💡</i>건의사항</button>
       <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
       <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
-    </div>`;
+    </div><div id="mMbBanner"></div><div id="mGbBanner"></div>`;
   if (notice.length) {
     h += `<div class="sec">📢 공지사항</div>`;
     h += notice.map(n => `<div class="card"><b>${esc(n.title || '')}</b><div class="noticeBox" style="margin-top:8px">${nl2br(n.body || '')}</div></div>`).join('');
@@ -249,6 +256,187 @@ async function viewHome() {
       여기서는 컨설팅 신청, 질문, 재고·배송요청을 편하게 하실 수 있어요.
     </div>`;
   $('pane').innerHTML = h;
+  homeGbBanner();   // 🤝 자리 남은 공동구매 공지(화면은 먼저 그리고 뒤에 채움)
+  homeMbBanner();   // 📮 내 사서함번호 공지(10-15)
+}
+// ── 🏢 온라인 사무실 (11-02 루크) ─────────────────────
+//  강사가 메인시트 '온라인사무실' 탭에 넣은 줌 회의. 열려 있으면 입장 팝업(회의마다 하루 한 번) — PC와 같은 규칙.
+let OFFICE = [];
+async function fetchOfficeM() {
+  try { const d = await api('getOffice', { cohort: session && session.cohort }); return (d && d.ok) ? d : null; }
+  catch (_) { return null; }
+}
+const officeKeyM = (it) => [it.date, it.meetingId, it.url].join('|');
+function officeCardM(it, i) {
+  const badge = `<span class="ofBadge on">● 지금 열려 있어요</span>`;
+  const line = (label, v) => v ? `<div class="ofLine"><span class="ofLbl">${label}</span><b class="ofVal">${esc(v)}</b>
+      <button class="btn sm ghost" data-v="${esc(v)}" onclick="officeCopyM(this)">복사</button></div>` : '';
+  return `<div class="card ofCard">
+    <div class="ofHead"><b>${esc(it.title)}</b>${badge}</div>
+    ${line('회의 ID', it.meetingId)}${line('비밀번호', it.password)}
+    ${it.notice ? `<div class="ofNotice">${nl2br(it.notice)}</div>` : ''}
+    ${it.url ? `<button class="btn" style="margin-top:12px" onclick="officeEnterM(${i})">🚪 온라인 사무실 입장하기</button>` : ''}
+  </div>`;
+}
+const OFFICE_TIP = `<p class="muted" style="font-size:12px;line-height:1.7">💡 줌 앱이 없으면 처음 한 번 설치 화면이 나와요. 비밀번호를 물어보면 [복사]해 둔 걸 붙여넣으세요.</p>`;
+async function viewOffice() {
+  loading();
+  const d = await fetchOfficeM();
+  if (cur !== 'office') return;
+  if (!d) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.<br><br><button class="btn mini" onclick="viewOffice()">다시 시도</button></div>`; return; }
+  OFFICE = d.items || [];
+  let h = `<div class="sec">🏢 온라인 사무실</div><p class="muted" style="font-size:13px;margin:0 2px 8px">강사님이 연 줌(Zoom) 회의실이에요. <b>입장하기</b>를 누르면 줌이 열려요.</p>`;
+  h += OFFICE.length ? OFFICE.map(officeCardM).join('') + OFFICE_TIP
+    : `<div class="empty">지금은 열린 온라인 사무실이 없어요.<br>사무실이 열리면 앱을 켤 때 알려드릴게요.</div>`;
+  $('pane').innerHTML = h;
+}
+window.officeCopyM = async (btn) => {
+  const v = btn && btn.dataset ? btn.dataset.v : ''; if (!v) return;
+  try { await navigator.clipboard.writeText(v); toast('복사했어요 · ' + v); } catch (_) { toast('복사하지 못했어요. 직접 입력해주세요.'); }
+};
+window.officeEnterM = async (i) => {
+  const it = OFFICE[i]; if (!it || !it.url) return;
+  if (it.password) { try { await navigator.clipboard.writeText(it.password); toast('비밀번호를 복사해 두었어요'); } catch (_) {} }
+  closeSheet(true);
+  window.open(it.url, '_blank', 'noopener');
+};
+async function checkOfficeM() {
+  if (!session || TABCFG.hidden.has('office') || TABCFG.locked.has('office')) return;
+  if (!$('sheet').classList.contains('hidden')) return;        // 다른 팝업 보는 중이면 다음에
+  const d = await fetchOfficeM(); if (!d) return;
+  const open = (d.items || []).filter(it => it.status === 'open' && it.url);
+  if (!open.length) return;
+  const seen = store.get('officeSeen', {}) || {};
+  Object.keys(seen).forEach(k => { if (k.split('|')[0] < (d.today || '')) delete seen[k]; });
+  const fresh = open.filter(it => !seen[officeKeyM(it)]);
+  if (!fresh.length || !$('sheet').classList.contains('hidden')) return;
+  fresh.forEach(it => { seen[officeKeyM(it)] = 1; });
+  store.set('officeSeen', seen);
+  OFFICE = open;
+  sheet(`<h3>🏢 온라인 사무실이 열렸어요!</h3>
+    <p class="muted" style="font-size:13px;margin:4px 0 6px">강사님과 동기들이 함께 일하고 있어요. 들어와서 같이 작업해요 😊</p>
+    ${open.map(officeCardM).join('')}${OFFICE_TIP}
+    <button class="btn ghost" onclick="closeSheet(true)" style="margin-top:4px">나중에 할게요</button>`);
+}
+let _officeTimerM = null;
+function startOfficeWatchM() {
+  if (_officeTimerM) return;
+  setTimeout(() => { try { checkOfficeM(); } catch (_) {} }, 4000);       // 사서함 팝업 다음
+  _officeTimerM = setInterval(() => { if (!document.hidden) { try { checkOfficeM(); } catch (_) {} } }, 3 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { try { checkOfficeM(); } catch (_) {} } });   // 폰에서 앱으로 돌아올 때
+}
+// ── 🚫 소싱주의 (11-02 루크) ─────────────────────
+//  강사가 메인시트 '소싱주의' 탭에 적은 위수탁 신고 브랜드·제품. 보기전용 + 검색 — PC와 같은 규칙.
+let SWARN = [];
+async function viewSWarn() {
+  loading();
+  let d = null;
+  try { d = await api('getSourcingWarn', { cohort: session && session.cohort }); } catch (_) {}
+  if (cur !== 'warn') return;
+  if (!d || !d.ok) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.<br><br><button class="btn mini" onclick="viewSWarn()">다시 시도</button></div>`; return; }
+  SWARN = (d.items || []).slice().sort((a, b) => (a.level === b.level ? 0 : a.level === 'high' ? -1 : 1)
+    || String(b.date).localeCompare(String(a.date)) || String(a.brand).localeCompare(String(b.brand), 'ko'));
+  $('pane').innerHTML = `<div class="sec">🚫 소싱주의</div>
+    <p class="muted" style="font-size:13px;margin:0 2px 8px">위수탁 신고가 들어오는 브랜드·제품이에요. <b>위탁으로 소싱하기 전에 꼭 확인</b>하세요.</p>
+    <input type="text" id="swQ" placeholder="브랜드나 제품명으로 찾기" oninput="swarnRenderM()" autocomplete="off">
+    <p class="muted swCount" id="swCount"></p><div id="swList"></div>`;
+  swarnRenderM();
+}
+const swarnNormM = (s) => String(s || '').toLowerCase().replace(/\s/g, '');
+window.swarnRenderM = () => {
+  const qv = $('swQ') ? $('swQ').value : '', q = swarnNormM(qv);
+  const list = q ? SWARN.filter(it => swarnNormM(it.brand + it.product + it.reason).includes(q)) : SWARN;
+  $('swCount').textContent = q ? `${list.length}개 찾음 (전체 ${SWARN.length}개)` : `전체 ${SWARN.length}개`;
+  if (!SWARN.length) { $('swList').innerHTML = `<div class="empty">아직 등록된 소싱주의 브랜드가 없어요.</div>`; return; }
+  if (!list.length) { $('swList').innerHTML = `<div class="empty">'${esc(qv)}'은(는) 목록에 없어요.<br>그래도 처음 보는 브랜드라면 위탁 전에 한 번 더 확인하세요.</div>`; return; }
+  $('swList').innerHTML = list.map(it => `<div class="card swCard ${it.level}">
+    <div class="swHead"><span class="swBadge ${it.level}">${it.level === 'high' ? '⛔ 위험' : '⚠️ 주의'}</span>
+      <b>${esc(it.brand)}</b>${it.date ? `<span class="swDate">${esc(it.date)}</span>` : ''}</div>
+    <div class="swProd">${it.product ? esc(it.product) : '브랜드 전체'}</div>
+    ${it.reason ? `<div class="swReason">${nl2br(it.reason)}</div>` : ''}
+  </div>`).join('');
+};
+// 📮 홈 공지: 내 사서함번호(PC와 같은 문구). 저장해 둔 번호 먼저, 두뇌에 가볍게 물어 갱신.
+function mMbHtml(mb) {
+  return mb ? `<div class="card" style="background:#eef4ff;border:1.5px solid #b9cdf5;color:#1d3a73">
+    <b>📮 내 사서함번호 <span style="font-size:19px;letter-spacing:1px">${esc(mb)}</span></b>
+    <div style="font-size:13px;margin-top:6px;line-height:1.65">앞으로 상품을 <b>주문할 때, 배송지 주소 맨 뒤에 '${esc(mb)}'</b>를 꼭 적어주세요.<br>예) 경기도 구리시 갈매순환로 154, 현대테라타워 제4층 제에이408호 힐링디어스(주) <b>${esc(mb)}</b></div></div>` : '';
+}
+async function homeMbBanner() {
+  if (!BRAIN.deliveryUrl || TABCFG.hidden.has('ship')) return;
+  const k = 'mbCode_' + ((session && session.userId) || '');
+  const put = (mb) => { const b = $('mMbBanner'); if (b && cur === 'home') b.innerHTML = mMbHtml(mb); };
+  const saved = store.get(k, ''); if (saved) { put(saved); mMbPopup(saved); }
+  try { const d = await dlApi('getMailbox'); if (d && d.ok && d.mailbox) { store.set(k, d.mailbox); put(d.mailbox); mMbPopup(d.mailbox); } } catch (_) {}
+}
+// 📮 사서함 안내 팝업 — 번호마다 한 번, [확인했어요] 누르면 다시 안 뜸
+function mMbPopup(mb) {
+  const k = 'mbAck_' + ((session && session.userId) || '');
+  if (!mb || store.get(k, '') === mb || !$('sheet').classList.contains('hidden')) return;
+  sheet(`<h3>📮 내 사서함번호가 생겼어요</h3>${mMbHtml(mb)}
+    <p class="muted" style="font-size:12.5px">창고에서 사서함번호로 물건을 찾아 보관하고 발송해요.</p>
+    <div class="row"><button class="btn" onclick="mMbAck('${esc(mb)}')">확인했어요</button></div>`, true);
+}
+window.mMbAck = (mb) => { store.set('mbAck_' + ((session && session.userId) || ''), mb); closeSheet(true);
+}
+// 🤝 공동구매 홈 배너 — 모집중·자리 남음·아직 신청 안 한 공구만 (PC와 같은 규칙, 루크 10-08)
+async function homeGbBanner() {
+  if (!BRAIN.deliveryUrl || TABCFG.hidden.has('gb') || TABCFG.locked.has('gb')) return;
+  let d = null;
+  try { d = await dlApi('getGroupBuys'); } catch (_) { return; }
+  const box = $('mGbBanner'); if (!box || cur !== 'home') return;
+  const list = ((d && d.ok && d.items) || []).filter(x => x.open && !x.joined && (x.left == null || x.left > 0));
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="sec">🤝 진행 중인 공동구매</div>` + list.slice(0, 3).map(x => `
+    <div class="card gbBanner" onclick="go('gb')">
+      <b>${esc(x.category || '새 공동구매')}</b> <span class="purBadge ing">선착순 모집 중</span>
+      <div class="m" style="margin-top:6px">개당 ${Number(x.price || 0).toLocaleString()}원 × ${x.per}개 · 총 예상 마진 <b>${Number(x.totalMargin || 0).toLocaleString()}원</b><br>
+        ${x.left != null ? `<b>${x.left}자리 남음</b>` : '모집 중'}${x.until ? ` · ⏰ ${esc(x.until)}까지` : ''}</div>
+      <div class="m" style="margin-top:4px;color:#8a3a5c;font-weight:700">👉 눌러서 보기 (제품은 신청 후 공개)</div>
+    </div>`).join('');
+}
+// 📒 입출금 내역(10-22) — PC와 같은 내용, 입금/출금 따로 보기
+let MBH = { d: null, tab: 'all' };
+window.mBalHist = async function () {
+  MBH.tab = 'all';
+  sheet(`<h3>📒 입출금 내역</h3><div class="muted" style="font-size:13px">불러오는 중…</div>`);
+  try { const d = await dlApi('getBalanceHistory'); MBH.d = d && d.ok ? d : null; } catch (_) { MBH.d = null; }
+  mBalHistRender();
+};
+window.mBalHistTab = (t) => { MBH.tab = t; mBalHistRender(); };
+// 10-30: 300건씩 '더 보기'로 이어 받는다 — 본인 내역 전부
+window.mBalHistMore = async function () {
+  const btn = document.getElementById('mBalMore'); if (btn) { btn.disabled = true; btn.textContent = '불러오는 중…'; }
+  try {
+    const d = await dlApi('getBalanceHistory', { offset: (MBH.d.items || []).length });
+    if (!d || !d.ok) throw 0;
+    MBH.d.items = (MBH.d.items || []).concat(d.items || []);
+    Object.assign(MBH.d, { balance: d.balance, sumIn: d.sumIn, sumOut: d.sumOut, total: d.total });
+    const box = document.getElementById('mBalList'), top = box ? box.scrollTop : 0;
+    mBalHistRender();
+    const nb = document.getElementById('mBalList'); if (nb) nb.scrollTop = top;
+  } catch (_) { if (btn) { btn.disabled = false; btn.textContent = '⬇ 다시 시도'; } toast('불러오지 못했어요. 다시 눌러주세요.'); }
+};
+function mBalHistRender() {
+  const d = MBH.d;
+  if (!d) { sheet(`<h3>📒 입출금 내역</h3><div class="empty">불러오지 못했어요. 잠시 후 다시 시도해주세요.</div><div class="row"><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`); return; }
+  const won = (n) => Math.abs(Math.round(Number(n) || 0)).toLocaleString() + '원';
+  const list = (d.items || []).filter(x => MBH.tab === 'all' ? true : (MBH.tab === 'in' ? x.amount > 0 : x.amount < 0));
+  const b = Number(d.balance || 0);
+  const tb = (k, l) => `<button class="btn mini ${MBH.tab === k ? '' : 'ghost'}" onclick="mBalHistTab('${k}')">${l}</button>`;
+  sheet(`<h3>📒 입출금 내역</h3>
+    <div class="card" style="font-size:13.5px;line-height:1.8">현재 잔액 <b style="color:${b < 0 ? '#c0392b' : '#1f4d38'}">${b < 0 ? '-' : ''}${won(b)}${b < 0 ? ' (미수금)' : ''}</b><br>
+      <span class="muted">입금 합계 <b style="color:#1f6b3a">+${won(d.sumIn)}</b> · 출금 합계 <b style="color:#c0392b">-${won(d.sumOut)}</b></span></div>
+    <div class="row" style="gap:6px;margin:8px 0">${tb('all', '전체')}${tb('in', '💰 입금')}${tb('out', '📦 출금')}</div>
+    <div id="mBalList" style="max-height:52vh;overflow:auto">${list.length ? list.map(x => {
+      const inn = x.amount > 0;
+      return `<div class="item"><div class="h"><span class="t" style="font-size:13px">${esc(x.reason || x.gubun || '')}</span>
+        <b style="color:${inn ? '#1f6b3a' : '#c0392b'};white-space:nowrap">${inn ? '+' : '-'}${won(x.amount)}</b></div>
+        <div class="m">${esc(fmtDT(x.at))} · ${esc(x.gubun || '')}${x.detail ? ' · ' + esc(x.detail) : ''}</div></div>`;
+    }).join('') : `<div class="empty">내역이 없어요.</div>`}</div>
+    ${d.total > (d.items || []).length ? `<p class="muted" style="font-size:12px;text-align:center">${(d.items || []).length}건 / 전체 ${d.total}건</p>
+      <button class="btn ghost" id="mBalMore" style="width:100%" onclick="mBalHistMore()">⬇ 이전 내역 ${Math.min(300, d.total - (d.items || []).length)}건 더 보기</button>` : ''}
+    <div class="row"><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`);
 }
 window.openRecharge = () => {
   if (!BRAIN.rechargeUrl) { toast('충전 페이지가 아직 설정되지 않았어요.'); return; }
@@ -573,20 +761,53 @@ const dlExpTs = (s) => { const m = String(s || '').match(/(\d{4})\D+(\d{1,2})(?:
 const dlSortByExpiry = (arr) => dlSortByName(arr).sort((a, b) => dlExpTs(a.expiry) - dlExpTs(b.expiry));
 const fmtDT = (s) => String(s || '').replace('T', ' ').slice(0, 16);
 
+// 빨리 열기(10-15): 마지막으로 본 내용을 먼저 보여주고 뒤에서 최신으로 바꾼다(PC와 같은 방식).
+//  입력 칸에 적는 중이면 덮어쓰지 않고 [새로 보기]만 띄운다.
+let _mDlDirty = false;
+document.addEventListener('input', (e) => { try { if (cur === 'ship' && e.target.closest && e.target.closest('#pane')) _mDlDirty = true; } catch (_) {} }, true);
+const mDlCacheKey = () => 'dlCache_ship_' + ((session && session.userId) || '');
+function mDlApply(inv, ship, bal) {
+  DL.inv = dlSortByName((inv && inv.items) || []);
+  DL.hist = (inv && inv.history) || [];
+  DL.srets = (inv && inv.stockReturns) || [];
+  DL.notice = (inv && inv.notice) || '';
+  DL.mb = (inv && inv.mailbox) || '';
+  DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
+  DL.bal = bal && bal.ok ? bal : null;
+}
+function mDlBar(html) {
+  let b = $('mDlStale'); const pane = $('pane'); if (!pane) return;
+  if (!b) { pane.insertAdjacentHTML('afterbegin', '<div id="mDlStale" class="card" style="font-size:12.5px;background:#fff8dc;border:1px solid #f0e2a8;padding:8px 12px;margin-bottom:10px"></div>'); b = $('mDlStale'); }
+  b.innerHTML = html;
+}
 async function viewShip() {
-  loading();
+  const cached = store.get(mDlCacheKey(), null);
+  _mDlDirty = false;
+  if (cached) { mDlApply(cached.inv, cached.ship, cached.bal); renderShip(); mDlBar('🔄 최신 정보 불러오는 중…'); }
+  else loading();
   try {
     const [inv, ship, bal] = await Promise.all([
       dlApi('getInventory').catch(() => null),
       dlApi('getMyShipments').catch(() => null),
       dlApi('getBalance').catch(() => null)
     ]);
+    if (cached) {
+      if (cur !== 'ship') return;
+      if (!inv || !inv.ok || !ship || !ship.ok) { mDlBar('⚠ 서버가 바빠 최신 정보를 못 불러왔어요. 잠시 후 다시 열어주세요.'); return; }
+      store.set(mDlCacheKey(), { inv, ship, bal });
+      if (_mDlDirty) { mDlBar('🆕 새 정보가 있어요 <button class="btn mini" onclick="mDlFresh()">새로 보기</button>'); window._mDlNext = { inv, ship, bal }; return; }
+      mDlApply(inv, ship, bal); renderShip(); return;
+    }
+    if (inv && inv.ok && ship && ship.ok) store.set(mDlCacheKey(), { inv, ship, bal });
     DL.inv = dlSortByName((inv && inv.items) || []);   // 이름 오름차순(드롭다운·인덱스 조회 기준)
     DL.hist = (inv && inv.history) || [];
+    DL.srets = (inv && inv.stockReturns) || [];
     DL.notice = (inv && inv.notice) || '';
+    DL.mb = (inv && inv.mailbox) || '';
     DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
     DL.bal = bal && bal.ok ? bal : null;
   } catch (_) { $('pane').innerHTML = `<div class="empty">연결에 실패했어요.</div>`; return; }
+  if (cur !== 'ship') return;   // 기다리는 사이 다른 탭으로 옮겼으면 덮어쓰지 않음
   renderShip();
 }
 function renderShip() {
@@ -596,7 +817,7 @@ function renderShip() {
     h += `<div class="card bal ${b < 0 ? 'neg' : ''}">
         <span>${b < 0 ? '미수금' : '선불 잔액'}</span>
         <span><b>${Math.abs(b).toLocaleString()}원</b>
-        <button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
+        <button class="btn mini ghost" style="margin-left:8px" onclick="mBalHist()">내역</button><button class="btn mini" style="margin-left:6px" onclick="openRecharge()">충전</button></span></div>`;
   }
   if (DL.notice) h += `<div class="noticeBox" style="margin-bottom:12px">${nl2br(DL.notice)}</div>`;
   h += `<button class="btn ghost" style="width:100%;margin:0 0 12px" onclick="mpInquiry()">💬 물류담당자에게 문의</button>`;
@@ -609,6 +830,7 @@ function renderShip() {
   if (DL.tab === 'ship') { try { dlInfo(); } catch (_) {} }
 }
 window.dlTab = (t) => { DL.tab = t; renderShip(); };
+window.mDlFresh = () => { const n = window._mDlNext; if (!n) return; _mDlDirty = false; mDlApply(n.inv, n.ship, n.bal); renderShip(); };
 
 // ── 현금영수증용 사업자등록번호 (구매대행·공동구매 공용, 한 번 적으면 기억) — PC·서버와 같은 검증 규칙 ──
 function bizNoFmt(v) {
@@ -630,7 +852,7 @@ function bizNoTake(id) {
 const bizNoField = (id) => `<label class="lbl">🧾 사업자등록번호 <span class="muted" style="font-weight:400">(현금영수증용 · 선택)</span></label>
   <input id="${id}" type="text" inputmode="numeric" maxlength="12" placeholder="000-00-00000" value="${esc(store.get('bizNo', '') || '')}">`;
 // ══════════ 🛒 구매대행 (모바일) — PC와 같은 규칙 ══════════
-//  신청 때 '구매요청 상한가 + 수수료(실제 구매가의 5%)' 만큼 쓸 수 있는 잔액 필요. 실제 차감은 코치 구매 후.
+//  신청 때 '구매요청 상한가 + 수수료(실제 구매가의 2%)' 만큼 쓸 수 있는 잔액 필요. 실제 차감은 코치 구매 후.
 //  용어: 구매가 = 코치가 산 금액 / 판매가 = 내가 네이버에서 파는 가격(마진 계산용)
 const M_PUR_DIRECT = '고객에게 바로 배송', M_PUR_INV = '내 재고로 입고';
 let PUR = { data: null, form: { product: '', link: '', option: '', qty: 1, max: '', method: M_PUR_INV, receiver: '', phone: '', addr: '', memo: '', sell: '', npct: '' } };
@@ -638,7 +860,7 @@ async function loadPurchases() {
   try { const d = await dlApi('getPurchases'); PUR.data = d && d.ok ? d : { error: (d && d.error) || '' }; }
   catch (_) { PUR.data = { error: 'net' }; }
 }
-const purRate = () => ((PUR.data && PUR.data.feeRate) || 0.05);
+const purRate = () => ((PUR.data && PUR.data.feeRate) || 0.02);
 const purNeed = (max) => Math.ceil((Number(max) || 0) * (1 + purRate()));
 const mWon = (n) => Math.round(n).toLocaleString() + '원';
 // 개당 마진 = 판매가 − 구매가 − 판매가×네이버수수료 − 구매가×구매대행수수료
@@ -669,7 +891,7 @@ function renderBuy() {
   if (d && !d.error) {
     const b = Number(d.balance || 0);
     h += `<div class="card bal ${b < 0 ? 'neg' : ''}"><span>${b < 0 ? '미수금' : '선불 잔액'}</span>
-        <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
+        <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini ghost" style="margin-left:8px" onclick="mBalHist()">내역</button><button class="btn mini" style="margin-left:6px" onclick="openRecharge()">충전</button></span></div>`;
   }
   $('pane').innerHTML = h + panePur();
   try { mpNeedHint(); } catch (_) {}
@@ -678,7 +900,7 @@ function mpItemMargin(x) {
   const sell = Number(x.sellPrice || 0), qty = Number(x.qty || 0);
   if (!(sell > 0) || !(qty > 0)) return '';
   const npct = Number(x.naverPct || 0) || dealFeePct();
-  const done = x.charged > 0;
+  const done = x.charged > 0 && !x.deposit;
   const cost = done ? (x.price + x.shipFee) / qty : x.max / qty;
   const r = mpMargin(sell, cost, npct);
   if (done) { r.m = sell - cost - r.naver - x.fee / qty; r.rate = r.m / sell * 100; }
@@ -692,7 +914,8 @@ function panePur() {
   const npct = f.npct !== '' ? f.npct : String(dealFeePct());
   let h = `<div class="card purIntro">🛒 <b>코치가 대신 구매해드려요.</b><br>
     · 수수료: <b>실제 구매가의 ${pct}%</b> · 결제: 선불잔액 차감<br>
-    · 신청하려면 <b>구매요청 상한가 + 수수료</b>만큼 잔액이 필요해요. 실제로는 산 금액만큼만 빠져요.
+    · 신청하면 <b>구매요청 상한가 + 수수료</b>가 잔액에서 바로 빠져요(선결제). 잔액이 모자라면 신청할 수 없어요.<br>
+    · 코치가 산 뒤 <b>실제 금액으로 정산</b>하고 남는 돈은 잔액으로 돌려드려요.
     ${held > 0 ? `<br>· 진행 중 구매대행에 ${held.toLocaleString()}원 잡혀 있어요 → 쓸 수 있는 잔액 <b>${Number(d.available || 0).toLocaleString()}원</b>` : ''}</div>`;
   h += `<div class="sec">✏️ 새 구매대행 신청</div><div class="card">
     <label class="lbl">카탈로그명</label><input id="mpProduct" type="text" placeholder="예) 시카플라스트 B5 100ml" value="${esc(f.product)}">
@@ -722,7 +945,9 @@ function panePur() {
   h += `<div class="sec">📋 내 구매대행 (${items.length})</div>`;
   if (!items.length) h += `<div class="empty">아직 신청한 구매대행이 없어요.</div>`;
   h += items.map(x => {
-    const money = x.charged > 0
+    const money = x.deposit
+      ? `선결제 ${x.charged.toLocaleString()}원 (상한가+수수료 · 구매 후 실제 금액으로 정산)`
+      : x.charged > 0
       ? `결제 ${x.charged.toLocaleString()}원 (구매가 ${x.price.toLocaleString()} + 배송비 ${x.shipFee.toLocaleString()} + 수수료 ${x.fee.toLocaleString()})`
       : `상한가 ${x.max.toLocaleString()}원`;
     const st = String(x.status || '접수');
@@ -775,7 +1000,7 @@ window.mpSubmit = async function () {
   const bizNo = bizNoTake('mpBiz'); if (bizNo === undefined) return;
   const need = purNeed(f.max), avail = Number((PUR.data && PUR.data.available) || 0);
   if (need > avail) { mpShort({ need, balance: PUR.data && PUR.data.balance, held: PUR.data && PUR.data.held, short: need - avail }); return; }
-  if (!confirm(`구매대행을 신청할까요?\n\n${f.product || f.link} × ${f.qty}\n구매요청 상한가 ${Number(f.max).toLocaleString()}원 (배송비 포함)\n수수료: 실제 구매가의 ${Math.round(purRate() * 100)}%`)) return;
+  if (!confirm(`구매대행을 신청할까요?\n\n${f.product || f.link} × ${f.qty}\n구매요청 상한가 ${Number(f.max).toLocaleString()}원 (배송비 포함)\n수수료: 실제 구매가의 ${Math.round(purRate() * 100)}%\n\n신청하면 ${need.toLocaleString()}원(상한가+수수료)이 잔액에서 바로 빠져요.\n구매 후 실제 금액으로 정산하고 남는 돈은 돌려드려요.`)) return;
   const btn = $('mpBtn'); if (btn) { btn.disabled = true; btn.textContent = '신청 중…'; }
   try {
     const d = await dlApi('submitPurchase', { product: f.product, link: f.link, option: f.option, qty: f.qty, max: Number(f.max),
@@ -783,17 +1008,17 @@ window.mpSubmit = async function () {
       sellPrice: Number(f.sell) || 0, naverPct: Number(f.npct) || 0, bizNo });
     if (d && d.ok) {
       PUR.form = { product: '', link: '', option: '', qty: 1, max: '', method: f.method, receiver: '', phone: '', addr: '', memo: '', sell: '', npct: f.npct };
-      toast('구매대행을 신청했어요 🛒');
+      toast(`구매대행 신청 완료 · ${need.toLocaleString()}원 선결제 🛒`);
       await loadPurchases(); renderBuy();
     } else if (d && d.blocked === '잔액부족') { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } mpShort(d); }
     else { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } alert((d && d.error) || '신청하지 못했어요.'); }
   } catch (_) { if (btn) { btn.disabled = false; btn.textContent = '🛒 구매대행 신청'; } alert('연결 오류로 신청하지 못했어요.'); }
 };
 window.mpCancel = async function (id) {
-  if (!confirm('이 구매대행 신청을 취소할까요?')) return;
+  if (!confirm('이 구매대행 신청을 취소할까요?\n선결제한 금액은 잔액으로 바로 돌려드려요.')) return;
   try {
     const d = await dlApi('cancelPurchase', { id });
-    if (d && d.ok) { toast('신청을 취소했어요'); await loadPurchases(); renderBuy(); }
+    if (d && d.ok) { toast(d.refunded > 0 ? `취소하고 ${Number(d.refunded).toLocaleString()}원 돌려드렸어요` : '신청을 취소했어요'); await loadPurchases(); renderBuy(); }
     else alert((d && d.error) || '취소하지 못했어요.');
   } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
 };
@@ -812,9 +1037,10 @@ function renderGroupBuy() {
   if (d.error) { $('pane').innerHTML = `<div class="empty">${/unknown action/.test(d.error) ? '공동구매 기능이 아직 준비 중이에요.' : '불러오지 못했어요.'}<br><br><button class="btn mini" onclick="viewGroupBuy()">다시 시도</button></div>`; return; }
   const b = Number(d.balance || 0);
   let h = `<div class="card bal ${b < 0 ? 'neg' : ''}"><span>${b < 0 ? '미수금' : '선불 잔액'}</span>
-      <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini" style="margin-left:8px" onclick="openRecharge()">충전</button></span></div>`;
+      <span><b>${Math.abs(b).toLocaleString()}원</b><button class="btn mini ghost" style="margin-left:8px" onclick="mBalHist()">내역</button><button class="btn mini" style="margin-left:6px" onclick="openRecharge()">충전</button></span></div>`;
   h += `<div class="card purIntro">🤝 <b>강사가 직접 소싱한 상품을 선착순으로 나눠드려요.</b><br>
-    · 신청하면 <b>필요 금액이 잔액에서 바로 차감</b>되고, 그때 제품이 공개돼요.<br>
+    · 신청하면 <b>필요 금액(상품 금액 + 공동구매 수수료)이 잔액에서 바로 차감</b>되고, 그때 제품이 공개돼요.<br>
+    · 잔액이 모자라면 신청할 수 없어요. 먼저 충전해주세요.<br>
     · 산 물건은 <b>내 재고로 바로 들어와요</b> (바로 배송요청 가능).<br>
     · 결제 후 취소는 강사에게 문의해주세요.</div>`;
   h += `<div class="card">${bizNoField('gbBiz')}</div>`;
@@ -827,9 +1053,10 @@ function renderGroupBuy() {
     const badge = x.joined ? '<span class="purBadge done">✅ 참여 완료</span>' : (x.open ? '<span class="purBadge ing">모집중</span>' : `<span class="purBadge cancel">${esc(x.closedWhy || '마감')}</span>`);
     let c = `<div class="item gbCard ${!x.open && !x.joined ? 'closed' : ''}"><div class="h"><b>${esc(x.category || '카테고리 미정')}</b>${badge}</div>
       <div style="font-size:13px;margin-top:6px">
-        ${row('개당 공구가', `<b>${won(x.price)}</b>`)}${row('1인 수량', x.per + '개')}${row('필요 금액', `<b>${won(x.need)}</b>`)}
+        ${row('개당 공구가', `<b>${won(x.price)}</b>`)}${row('1인 수량', x.per + '개')}
+        ${x.fee > 0 ? row(`상품 금액 (${x.per}개)`, won(x.goods)) + row(`공동구매 수수료 ${gbFeePct(x)}%`, won(x.fee)) : ''}${row('필요 금액', `<b>${won(x.need)}</b>`)}
         ${row('예상 판매가 (개당)', won(x.sell))}
-        ${row(`예상 마진 (개당 · 수수료 ${x.npct}%)`, won(x.unitMargin), `color:${col};border-top:1px solid #eee;margin-top:4px;padding-top:5px`)}
+        ${row(`예상 마진 (개당 · 네이버 ${x.npct}%${x.fee > 0 ? ` · 공구 수수료 ${gbFeePct(x)}%` : ''})`, won(x.unitMargin), `color:${col};border-top:1px solid #eee;margin-top:4px;padding-top:5px`)}
         ${row(`<b>총 예상 마진 (${x.per}개)</b>`, `<b>${won(x.totalMargin)}</b>`, `color:${col}`)}
       </div>
       <div class="m" style="margin-top:6px">👥 ${x.seats > 0 ? `${x.used}/${x.seats}명${x.left > 0 ? ` · ${x.left}자리 남음` : ''}` : `${x.used}명 신청`}${x.until ? ` · ⏰ ${esc(x.until)}까지` : ''}</div>`;
@@ -847,6 +1074,7 @@ function renderGroupBuy() {
   }).join('');
   $('pane').innerHTML = h;
 }
+function gbFeePct(x) { return Math.round((Number(x && x.feeRate) || 0) * 1000) / 10; }
 function gbShort(r) {
   const won = (n) => Math.round(Number(n) || 0).toLocaleString() + '원';
   sheet(`<h3>💳 잔액을 먼저 충전해주세요</h3>
@@ -861,7 +1089,7 @@ window.gbJoin = async function (id) {
   const bizNo = bizNoTake('gbBiz'); if (bizNo === undefined) return;
   const avail = Number((GB.data && GB.data.available) || 0);
   if (x.need > avail) { gbShort({ need: x.need, balance: GB.data.balance, held: (GB.data.balance || 0) - avail, short: x.need - avail }); return; }
-  if (!confirm(`🤝 공동구매 신청\n\n${x.category}\n${x.per}개 × ${x.price.toLocaleString()}원 = ${x.need.toLocaleString()}원\n\n신청하면 잔액에서 바로 차감되고 제품이 공개돼요.\n결제 후 취소는 강사 문의로만 가능해요.`)) return;
+  if (!confirm(`🤝 공동구매 신청\n\n${x.category}\n${x.per}개 × ${x.price.toLocaleString()}원${x.fee > 0 ? ` + 수수료 ${gbFeePct(x)}% ${x.fee.toLocaleString()}원` : ''} = ${x.need.toLocaleString()}원\n\n신청하면 잔액에서 바로 차감되고 제품이 공개돼요.\n결제 후 취소는 강사 문의로만 가능해요.`)) return;
   document.querySelectorAll('.gbJoin').forEach(b => { b.disabled = true; });
   try {
     const d = await dlApi('joinGroupBuy', { id, bizNo });
@@ -881,13 +1109,22 @@ window.mpInquiry = async function () {
     const done = String(q.reply || '').trim();
     return `<div class="item"><div class="m" style="color:#333"><b>Q.</b> ${nl2br(q.message || '')}</div>
       <div class="m">${esc(fmtDT(q.when || q.at))} · ${done ? '✅ 답변완료' : '⏳ 답변 대기'}</div>
-      ${done ? `<div class="msgBox" style="margin-top:6px"><b>답변</b><br>${nl2br(q.reply)}</div>` : ''}</div>`;
+      ${done ? `<div class="msgBox" style="margin-top:6px"><b>답변</b><br>${nl2br(q.reply)}${mMsgImgs(q)}</div>` : ''}
+      ${q.canCancel ? `<div class="row" style="margin-top:8px"><button class="btn mini ghost" onclick="mpInqCancel(${Number(q.row) || 0}, '${esc(q.at)}')">문의 취소</button></div>` : ''}</div>`;
   }).join('') : `<div class="empty">아직 남긴 문의가 없어요.</div>`;
   sheet(`<h3>💬 물류담당자 문의</h3>
     <p class="muted" style="font-size:12.5px;margin:4px 0 10px">배송·재고 관련 문의를 남기면 물류담당자가 확인 후 답변드려요.<br>(오전 11시 이전 문의는 당일 오전 / 오후에는 2~3시간 이내 답변)</p>
     <textarea id="mpInqMsg" rows="3" style="width:100%;box-sizing:border-box" placeholder="예) 김수지님 배송요청 취소 부탁드려요">${esc(INQ.draft)}</textarea>
     <div class="row" style="margin:8px 0 12px"><button class="btn" id="mpInqBtn" onclick="mpInquirySend()">문의 남기기</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>
     <div style="max-height:45vh;overflow:auto">${thread}</div>`);
+};
+window.mpInqCancel = async function (row, at) {   // 답변 전 문의 본인 취소 (10-12)
+  if (!confirm('이 문의를 취소할까요?\n(답변이 달리기 전에만 취소할 수 있어요)')) return;
+  try {
+    const d = await dlApi('cancelInquiry', { row, at });
+    if (d && d.ok) { toast('문의를 취소했어요'); mpInquiry(); }
+    else alert((d && d.error) || '취소하지 못했어요.');
+  } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
 };
 window.mpInquirySend = async function () {
   if (INQ.sending) return;
@@ -902,6 +1139,215 @@ window.mpInquirySend = async function () {
   } catch (_) { alert('연결 오류로 보내지 못했어요.'); }
   INQ.sending = false; if (b) { b.disabled = false; b.textContent = '문의 남기기'; }
 };
+
+// ══════════ 💡 건의사항 게시판 (모바일) — PC와 같은 두뇌·규칙 ══════════
+const sgApi = (a, e) => call(BRAIN.suggestUrl || BRAIN.apiUrl, a, e);   // 10-22: 메인 두뇌가 처리
+let SGM = { items: [], cats: [], cat: 'all', sort: 'new', mine: false, post: null, imgs: [] };
+async function viewSuggest() {
+  if (!(BRAIN.suggestUrl || BRAIN.apiUrl)) { $('pane').innerHTML = `<div class="empty">건의사항 기능이 아직 준비 중이에요.</div>`; return; }
+  loading();
+  try { const d = await sgApi('sgList'); if (d && d.ok) { SGM.items = d.items || []; SGM.cats = d.cats || []; }
+    else if (d && /unknown action/.test(d.error || '')) { if (cur === 'sg') $('pane').innerHTML = `<div class="empty">건의사항 기능이 곧 열려요. 조금만 기다려주세요!</div>`; return; }
+    else throw 0; }
+  catch (_) { if (cur === 'sg') $('pane').innerHTML = `<div class="empty">불러오지 못했어요.<br><br><button class="btn mini" onclick="viewSuggest()">다시 시도</button></div>`; return; }
+  if (cur === 'sg') renderSuggestM();
+}
+window.sgmSet = (k, v) => { SGM[k] = v; renderSuggestM(); };
+function sgmBadge(st) {
+  const s = String(st || '접수');
+  const cls = s === '반영완료' ? 'done' : (s === '보류' ? 'cancel' : (s === '개발중' || s === '검토중' ? 'ing' : 'wait'));
+  return `<span class="purBadge ${cls}">${esc(s)}</span>`;
+}
+function renderSuggestM() {
+  let list = SGM.items.slice();
+  if (SGM.cat !== 'all') list = list.filter(x => x.cat === SGM.cat);
+  if (SGM.mine) list = list.filter(x => x.mine);
+  if (SGM.sort === 'like') list.sort((a, b) => (b.likes - a.likes) || (b.at > a.at ? 1 : -1));
+  const chip = (k, v, l) => `<button class="btn mini ${SGM[k] === v ? '' : 'ghost'}" onclick="sgmSet('${k}', ${typeof v === 'string' ? `'${v}'` : v})">${l}</button>`;
+  let h = `<div class="sec">💡 프로그램 건의사항</div>
+    <div class="card muted" style="font-size:12.5px;line-height:1.7">바라는 점을 남겨주세요. 다른 분 건의에 👍 공감·댓글을 달 수 있어요. 공감 많은 건의부터 우선 검토해요.</div>
+    <button class="btn" style="width:100%;margin-bottom:10px" onclick="sgmWrite()">✏️ 건의하기</button>
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">${chip('cat', 'all', '전체')}${SGM.cats.map(c => chip('cat', c, esc(c))).join('')}</div>
+    <div class="row" style="gap:6px;margin-bottom:10px">${chip('sort', 'new', '🕒 최신')}${chip('sort', 'like', '👍 공감순')}${chip('mine', !SGM.mine, SGM.mine ? '✅ 내 글만' : '내 글만')}</div>`;
+  h += list.length ? list.map(x => `<div class="item" onclick="sgmOpen('${esc(x.id)}')">
+      <div class="h"><span class="t">${esc(x.title)}</span>${sgmBadge(x.status)}</div>
+      <div class="m">${esc(x.preview || '')}</div>
+      <div class="m">${esc(x.cat)} · ${esc(x.nick)}${x.mine ? ' (나)' : ''} · ${esc(fmtDT(x.at))} · ${x.liked ? '💙' : '👍'} ${x.likes} · 💬 ${x.cmts}${x.reply ? ' · <b>강사 답변</b>' : ''}</div></div>`).join('')
+    : `<div class="empty">아직 건의가 없어요. 첫 건의를 남겨주세요!</div>`;
+  $('pane').innerHTML = h;
+}
+window.sgmOpen = async function (id) {
+  sheet(`<h3>💡 건의</h3><div class="muted" style="font-size:13px">불러오는 중…</div>`);
+  try { const d = await sgApi('sgGet', { id }); if (!d || !d.ok) { sheet(`<h3>💡 건의</h3><div class="empty">${esc((d && d.error) || '불러오지 못했어요.')}</div>`); return; } SGM.post = d.post; }
+  catch (_) { sheet(`<h3>💡 건의</h3><div class="empty">연결 오류</div>`); return; }
+  sgmRenderPost();
+};
+function sgmRenderPost() {
+  const p = SGM.post; if (!p) return;
+  const imgs = (p.images || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">` + p.images.map(u => `<a href="${esc(String(u).replace(/&sz=w\d+/, '&sz=w3000'))}" target="_blank" rel="noopener"><img src="${esc(u)}" style="max-width:100%;max-height:220px;border-radius:8px" onerror="this.style.display='none'"></a>`).join('') + `</div>` : '';
+  sheet(`<h3>${esc(p.title)}</h3>
+    <div class="m" style="font-size:12.5px;color:#888">${sgmBadge(p.status)} ${esc(p.cat)} · ${esc(p.nick)}${p.mine ? ' (나)' : ''} · ${esc(fmtDT(p.at))}</div>
+    <div style="margin:10px 0;line-height:1.7;font-size:14px">${nl2br(p.body || '')}</div>${imgs}
+    ${p.reply ? `<div class="msgBox" style="margin-top:10px"><b>👩‍🏫 강사 답변</b><br>${nl2br(p.reply)}</div>` : ''}
+    <div class="row" style="gap:8px;margin:10px 0"><button class="btn mini ${p.liked ? '' : 'ghost'}" onclick="sgmLike('${esc(p.id)}')">${p.liked ? '💙 공감함' : '👍 공감'} ${p.likes}</button>
+      ${p.mine ? `<button class="btn mini ghost" onclick="sgmDel('${esc(p.id)}','')">🗑 삭제</button>` : ''}</div>
+    <b style="font-size:13px">💬 댓글 ${(p.comments || []).length}</b>
+    <div style="max-height:30vh;overflow:auto;margin:6px 0">${(p.comments || []).map(c => `<div class="item" style="${c.staff ? 'background:#fff7e6' : ''}"><div class="m" style="color:#333"><b>${esc(c.nick)}${c.mine ? ' (나)' : ''}</b> · ${esc(fmtDT(c.at))}${c.mine ? ` · <a href="#" onclick="sgmDel('${esc(p.id)}','${esc(c.id)}');return false">삭제</a>` : ''}<br>${nl2br(c.body)}</div></div>`).join('') || '<div class="m">첫 댓글을 남겨보세요.</div>'}</div>
+    <textarea id="sgmCmt" rows="2" style="width:100%;box-sizing:border-box" placeholder="댓글을 입력하세요"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" id="sgmCmtBtn" onclick="sgmComment('${esc(p.id)}')">댓글 달기</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`);
+}
+window.sgmLike = async function (id) {
+  try { const d = await sgApi('sgLike', { id }); if (d && d.ok && SGM.post) { SGM.post.liked = d.liked; SGM.post.likes = d.likes; sgmRenderPost(); const it = SGM.items.find(x => x.id === id); if (it) { it.liked = d.liked; it.likes = d.likes; } } else alert((d && d.error) || '실패했어요.'); }
+  catch (_) { alert('연결 오류'); }
+};
+window.sgmComment = async function (id) {
+  const t = String(($('sgmCmt') || {}).value || '').trim(); if (!t) { alert('댓글 내용을 입력해주세요.'); return; }
+  const b = $('sgmCmtBtn'); if (b) { b.disabled = true; b.textContent = '올리는 중…'; }
+  try { const d = await sgApi('sgComment', { id, body: t }); if (d && d.ok) { sgmOpen(id); viewSuggestQuiet(); } else { alert((d && d.error) || '실패했어요.'); if (b) { b.disabled = false; b.textContent = '댓글 달기'; } } }
+  catch (_) { alert('연결 오류'); if (b) { b.disabled = false; b.textContent = '댓글 달기'; } }
+};
+window.sgmDel = async function (id, cid) {
+  if (!confirm(cid ? '이 댓글을 삭제할까요?' : '이 건의를 삭제할까요?')) return;
+  try { const d = await sgApi('sgDelete', { id, cid }); if (d && d.ok) { toast('삭제했어요'); if (cid) sgmOpen(id); else { closeSheet(true); viewSuggest(); } } else alert((d && d.error) || '삭제하지 못했어요.'); }
+  catch (_) { alert('연결 오류'); }
+};
+async function viewSuggestQuiet() { try { const d = await sgApi('sgList'); if (d && d.ok) { SGM.items = d.items || []; if (cur === 'sg') renderSuggestM(); } } catch (_) {} }
+function sgmShrink(file) {
+  return new Promise((ok) => { const r = new FileReader(); r.onload = () => { const im = new Image(); im.onload = () => {
+    const M = 1600, s = Math.min(1, M / Math.max(im.width, im.height)), c = document.createElement('canvas');
+    c.width = Math.round(im.width * s); c.height = Math.round(im.height * s); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); ok(c.toDataURL('image/jpeg', 0.85)); };
+    im.onerror = () => ok(''); im.src = r.result; }; r.onerror = () => ok(''); r.readAsDataURL(file); });
+}
+window.sgmWrite = function () {
+  SGM.imgs = [];
+  sheet(`<h3>✏️ 건의하기</h3>
+    <label class="lbl">카테고리</label><select id="sgmCat" style="width:100%">${SGM.cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
+    <label class="lbl">제목</label><input id="sgmTitle" type="text" maxlength="80" placeholder="예: 배송요청 목록에 날짜 검색이 있으면 좋겠어요">
+    <label class="lbl">내용</label><textarea id="sgmBody" rows="5" style="width:100%;box-sizing:border-box" placeholder="어떤 점이 불편했는지, 어떻게 바뀌면 좋을지 적어주세요."></textarea>
+    <label class="lbl">사진 (선택 · 최대 3장)</label><input id="sgmFiles" type="file" accept="image/*" multiple onchange="sgmPick(this)">
+    <div id="sgmPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+    <p class="muted" style="font-size:12px">다른 수강생에게는 닉네임 첫 글자만 보여요.</p>
+    <div class="row"><button class="btn" id="sgmSend" onclick="sgmSubmit()">건의 올리기</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`, true);
+};
+window.sgmPick = async function (inp) {
+  const files = Array.from(inp.files || []).slice(0, 3);
+  if ((inp.files || []).length > 3) alert('사진은 최대 3장까지예요. 앞의 3장만 올릴게요.');
+  SGM.imgs = (await Promise.all(files.map(sgmShrink))).filter(x => x);
+  const pv = $('sgmPrev'); if (pv) pv.innerHTML = SGM.imgs.map(u => `<img src="${u}" style="height:70px;border-radius:6px">`).join('');
+};
+window.sgmSubmit = async function () {
+  const title = String(($('sgmTitle') || {}).value || '').trim(), body = String(($('sgmBody') || {}).value || '').trim(), cat = ($('sgmCat') || {}).value || '';
+  if (!title) { alert('제목을 적어주세요.'); return; }
+  if (!body) { alert('내용을 적어주세요.'); return; }
+  const b = $('sgmSend'); if (b) { b.disabled = true; b.textContent = '올리는 중…'; }
+  try { const d = await sgApi('sgCreate', { title, body, cat, images: SGM.imgs }); if (d && d.ok) { toast('건의를 올렸어요. 고마워요! 💡'); closeSheet(true); viewSuggest(); } else { alert((d && d.error) || '올리지 못했어요.'); if (b) { b.disabled = false; b.textContent = '건의 올리기'; } } }
+  catch (_) { alert('연결 오류로 올리지 못했어요. 목록에서 올라갔는지 확인해주세요.'); if (b) { b.disabled = false; b.textContent = '건의 올리기'; } }
+};
+
+// ══════════ 📈 가격추이 (모바일) — PC와 같은 메인 두뇌 pt* ══════════
+let PTM = { items: [], max: 20, days: {} };
+const ptmWon = (n) => (Number(n) || 0).toLocaleString() + '원';
+const ptmDate = (d) => { const s = String(d || ''); return s.length === 8 ? (Number(s.slice(4, 6)) + '.' + Number(s.slice(6, 8)) + '.') : s; };
+function ptmVerdict(st) {
+  if (!st) return null;
+  if (st.max3 === st.min3) return { c: '#4a5260', b: '#f1f3f6', t: '3개월간 변동 없음' };
+  if (st.cur <= st.min3) return { c: '#1e7d3c', b: '#e6f6ec', t: '🔥 3개월 최저가' };
+  const pos = (st.cur - st.min3) / (st.max3 - st.min3);
+  if (pos <= 0.25) return { c: '#1e7d3c', b: '#e6f6ec', t: '👍 싼 편' };
+  if (pos >= 0.75) return { c: '#b3261e', b: '#fdecea', t: '😥 비싼 편' };
+  return { c: '#4a5260', b: '#f1f3f6', t: '보통' };
+}
+function ptmChart(hist, days, target) {
+  const h = (hist || []).slice(-days); if (h.length < 2) return '<div class="muted" style="font-size:12.5px;margin-top:6px">그래프를 그릴 기록이 아직 없어요.</div>';
+  const W = 340, H = 130, L = 52, R = 6, T = 10, B = 18;
+  const vals = h.map(x => x[1]).concat(target > 0 ? [target] : []);
+  let mn = Math.min(...vals), mx = Math.max(...vals); if (mx === mn) { mx += 1; mn -= 1; }
+  const pad = (mx - mn) * 0.12; mn -= pad; mx += pad;
+  const X = i => L + (W - L - R) * (i / (h.length - 1)), Y = v => T + (H - T - B) * (1 - (v - mn) / (mx - mn));
+  const pts = h.map((x, i) => X(i).toFixed(1) + ',' + Y(x[1]).toFixed(1)).join(' ');
+  const lo = Math.min(...h.map(x => x[1])), hi = Math.max(...h.map(x => x[1])), loI = h.findIndex(x => x[1] === lo), last = h[h.length - 1];
+  const tgt = target > 0 ? `<line x1="${L}" x2="${W - R}" y1="${Y(target).toFixed(1)}" y2="${Y(target).toFixed(1)}" stroke="#e8630a" stroke-dasharray="5 4"/><text x="${W - R}" y="${(Y(target) - 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#e8630a" font-weight="700">목표 ${ptmWon(target)}</text>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;margin-top:6px">
+    <line x1="${L}" x2="${W - R}" y1="${Y(hi).toFixed(1)}" y2="${Y(hi).toFixed(1)}" stroke="#e6e9ee" stroke-dasharray="3 3"/><line x1="${L}" x2="${W - R}" y1="${Y(lo).toFixed(1)}" y2="${Y(lo).toFixed(1)}" stroke="#e6e9ee" stroke-dasharray="3 3"/>
+    <text x="${L - 4}" y="${(Y(hi) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#8a8fa0">${ptmWon(hi)}</text><text x="${L - 4}" y="${(Y(lo) + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#8a8fa0">${ptmWon(lo)}</text>
+    ${tgt}<polyline points="${L},${H - B} ${pts} ${W - R},${H - B}" fill="rgba(107,78,168,.08)" stroke="none"/><polyline points="${pts}" fill="none" stroke="#6b4ea8" stroke-width="2"/>
+    <circle cx="${X(loI).toFixed(1)}" cy="${Y(lo).toFixed(1)}" r="3" fill="#1e7d3c"/><circle cx="${X(h.length - 1).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="3.5" fill="#6b4ea8"/>
+    <text x="${L}" y="${H - 4}" font-size="9" fill="#8a8fa0">${ptmDate(h[0][0])}</text><text x="${W - R}" y="${H - 4}" text-anchor="end" font-size="9" fill="#8a8fa0">${ptmDate(last[0])}</text>
+  </svg>`;
+}
+async function viewPriceTrend() {
+  loading();
+  try { const d = await api('ptList'); if (d && d.ok) { PTM.items = d.items || []; PTM.max = d.max || 20; } else throw new Error((d && d.error) || ''); }
+  catch (e) { if (cur === 'pt') $('pane').innerHTML = `<div class="empty">불러오지 못했어요.<br>${esc(e.message || '')}<br><br><button class="btn mini" onclick="viewPriceTrend()">다시 시도</button></div>`; return; }
+  ptmMarkSeen();
+  if (cur === 'pt') renderPriceTrendM();
+}
+function renderPriceTrendM() {
+  let h = `<div class="sec">📈 가격추이</div>
+    <div class="card muted" style="font-size:12.5px;line-height:1.7">네이버 가격비교 <b>카탈로그 링크</b>를 등록하면 최근 6개월 최저가 흐름을 보여드려요. 목표가를 정하면 그 아래로 떨어질 때 알려드려요. (최대 ${PTM.max}개)</div>
+    <div class="card">
+      <label class="lbl">카탈로그 링크</label><input id="ptmUrl" type="text" placeholder="https://search.shopping.naver.com/catalog/…">
+      <label class="lbl">상품 이름 (알아보기 쉽게)</label><input id="ptmLabel" type="text" placeholder="예) 냉감 데오시트 15매 4개">
+      <label class="lbl">목표가 (선택)</label><input id="ptmTarget" type="number" inputmode="numeric" placeholder="예) 10000">
+      <button class="btn" id="ptmAddBtn" style="width:100%;margin-top:10px" onclick="ptmAdd()">➕ 등록</button>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">네이버 쇼핑에서 '가격비교' 상품을 열고 주소(…/catalog/숫자)를 복사해 붙여넣으세요.</p>
+      <button class="btn mini ghost" id="dealPushBtn" style="margin-top:8px" onclick="toggleDealPush()">🔔 알림 받기</button>
+      <p class="muted" style="font-size:11.5px;margin:4px 0 0">폰 알림은 '할인 알림'과 같은 스위치예요.</p>
+    </div>`;
+  h += PTM.items.length ? PTM.items.map((it, i) => {
+    const st = it.stats, v = ptmVerdict(st), days = PTM.days[it.id] || 90;
+    const top = `<div class="h"><span class="t">${esc(it.label)}</span><span><button class="btn mini ghost" onclick="ptmOpen(${i})">🔗</button> <button class="btn mini ghost" onclick="ptmDel(${i})">삭제</button></span></div>
+      ${it.name ? `<div class="m" style="font-size:11.5px">${esc(it.name)}</div>` : ''}`;
+    if (!st) return `<div class="item">${top}<div class="m" style="margin-top:6px">${it.err ? '⚠ ' + esc(it.err) : '⏳ 가격 기록을 가져오는 중이에요. 보통 30분 안에, 늦어도 다음 날 아침에 보여요.'}</div></div>`;
+    return `<div class="item">${top}
+      <div style="display:flex;align-items:center;gap:8px;margin:6px 0 2px;flex-wrap:wrap"><b style="font-size:20px">${ptmWon(st.cur)}</b><span style="font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 9px;color:${v.c};background:${v.b}">${v.t}</span></div>
+      <div class="m">3개월 최저 <b>${ptmWon(st.min3)}</b> · 평균 ${ptmWon(st.avg3)} · 최고 ${ptmWon(st.max3)}</div>
+      <div class="row" style="gap:4px;margin-top:6px">${[[14, '2주'], [30, '1개월'], [90, '3개월'], [180, '6개월']].map(([d, t]) => `<button class="btn mini ${days === d ? '' : 'ghost'}" onclick="ptmDays('${esc(it.id)}',${d})">${t}</button>`).join('')}</div>
+      ${ptmChart(it.hist, days, it.target)}
+      <div class="row" style="gap:6px;margin-top:8px;align-items:center"><span style="font-size:13px">🎯</span><input id="ptmT_${i}" type="number" inputmode="numeric" value="${it.target || ''}" placeholder="목표가" style="flex:1"><button class="btn mini" onclick="ptmSaveTarget(${i})">저장</button></div>
+      ${it.alertText ? `<div class="msgBox" style="margin-top:8px;font-size:12.5px">${esc(it.alertText)}</div>` : ''}
+    </div>`;
+  }).join('') : `<div class="empty">아직 등록한 상품이 없어요.</div>`;
+  $('pane').innerHTML = h;
+  try { refreshPushBtn(); } catch (_) {}
+}
+window.ptmDays = (id, d) => { PTM.days[id] = d; renderPriceTrendM(); };
+window.ptmOpen = (i) => { const it = PTM.items[i]; if (it) window.open(it.url, '_blank', 'noopener'); };
+window.ptmAdd = async function () {
+  const url = String(($('ptmUrl') || {}).value || '').trim(), label = String(($('ptmLabel') || {}).value || '').trim(), target = Number(($('ptmTarget') || {}).value) || 0;
+  if (!url) { alert('카탈로그 링크를 넣어주세요.'); return; }
+  if (!label) { alert('상품 이름을 적어주세요.'); return; }
+  const b = $('ptmAddBtn'); if (b) { b.disabled = true; b.textContent = '등록 중…'; }
+  try {
+    const d = await api('ptAdd', { url, label, target });
+    if (d && d.ok) { toast(d.ready ? '등록했어요' : '등록했어요. 기록은 곧 채워져요'); viewPriceTrend(); return; }
+    alert((d && d.error) || '등록하지 못했어요.');
+  } catch (_) { alert('연결 오류로 등록하지 못했어요.'); }
+  if (b) { b.disabled = false; b.textContent = '➕ 등록'; }
+};
+window.ptmSaveTarget = async function (i) {
+  const it = PTM.items[i]; if (!it) return;
+  const t = Number(($('ptmT_' + i) || {}).value) || 0;
+  try { const d = await api('ptTarget', { id: it.id, target: t }); if (d && d.ok) { it.target = d.target; it.alertText = ''; toast(t ? '목표가를 저장했어요' : '목표가를 지웠어요'); renderPriceTrendM(); } else alert((d && d.error) || '저장하지 못했어요.'); }
+  catch (_) { alert('연결 오류'); }
+};
+window.ptmDel = async function (i) {
+  const it = PTM.items[i]; if (!it) return;
+  if (!confirm(`'${it.label}'을(를) 지울까요?`)) return;
+  try { const d = await api('ptDel', { id: it.id }); if (d && d.ok) { PTM.items.splice(i, 1); renderPriceTrendM(); } else alert((d && d.error) || '지우지 못했어요.'); }
+  catch (_) { alert('연결 오류'); }
+};
+function ptmMarkSeen() { try { const s = {}; PTM.items.forEach(x => { if (x.alertAt) s[x.id] = x.alertAt; }); store.set('ptSeen_' + session.userId, s); } catch (_) {} }
+// 앱 열 때 새 가격 알림이 있으면 토스트
+async function checkPriceAlertsM() {
+  try {
+    const d = await api('ptList'); if (!d || !d.ok) return;
+    const seen = store.get('ptSeen_' + session.userId, {}) || {};
+    const fresh = (d.items || []).filter(x => x.alertAt && seen[x.id] !== x.alertAt);
+    PTM.items = d.items || []; ptmMarkSeen();
+    if (fresh.length) toast(fresh[0].alertText + (fresh.length > 1 ? ` 외 ${fresh.length - 1}건` : ''));
+  } catch (_) {}
+}
 
 // ➕ 입고 등록 (모바일) — 화면을 다시 그려도 입력값이 날아가지 않게 따로 들고 있는다
 let INB = { open: false, product: '', option: '', qty: 1, price: '', site: '', memo: '' };
@@ -926,6 +1372,7 @@ window.inbSubmit = async function () {
       INB = { open: false, product: '', option: '', qty: 1, price: '', site: '', memo: '' };
       toast('입고 등록했어요 📦');
       viewShip();                       // 재고 목록까지 새로 불러온다
+      if (d.warn === 'dup' && d.dupMsg) setTimeout(() => alert('⚠ 중복 입고 확인\n\n' + d.dupMsg), 300);   // 같은 상품 7일 내 재등록(10-14)
     } else {
       if (btn) { btn.disabled = false; btn.textContent = '➕ 입고 등록'; }
       alert((d && d.error) || '등록에 실패했어요.');
@@ -972,8 +1419,16 @@ window.invFilter = function () {
   const x = $('invClr'); if (x) x.style.display = q ? '' : 'none';
 };
 window.invClear = function () { const b = $('invQ'); if (b) { b.value = ''; b.focus(); } invFilter(); };
+// 📮 내 사서함번호(10-15) — 주문할 때 배송지 주소 맨 뒤에 적게
+function mbBox() {
+  if (!DL.mb) return '';
+  return `<div class="card" style="background:#eef4ff;border:1.5px solid #b9cdf5;color:#1d3a73;margin-bottom:12px">
+    📮 내 사서함번호 <b style="font-size:20px;letter-spacing:1px;margin:0 6px">${esc(DL.mb)}</b>
+    <button class="btn mini ghost" onclick="try{navigator.clipboard.writeText('${esc(DL.mb)}');toast('복사했어요')}catch(_){}">복사</button>
+    <div style="font-size:12.5px;margin-top:6px;line-height:1.6">상품을 <b>주문할 때 배송지 주소 맨 뒤에 '${esc(DL.mb)}'</b>를 꼭 적어주세요.<br>예) 경기도 구리시 갈매순환로 154, 현대테라타워 제4층 제에이408호 힐링디어스(주) <b>${esc(DL.mb)}</b></div></div>`;
+}
 function paneInv() {
-  let h = '';
+  let h = mbBox();
   if (DL.inv.length || (DL.hist || []).length) {
     h += `<div class="invSrch">
         <input id="invQ" type="search" inputmode="search" placeholder="🔍 상품·옵션·메모 검색" oninput="invFilter()">
@@ -1016,11 +1471,18 @@ function paneInv() {
           ${it.memo ? `<div class="invMemo">📝 ${esc(it.memo)}</div>` : ''}
           ${it.site ? (siteUrlOf(it.site)
             ? `<div class="invSite"><a href="#" data-site="${esc(it.site)}" onclick="openBuySite(this.dataset.site);return false;">🔗 ${esc(it.site)}</a></div>`
-            : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}${it.expiry ? `<div class="muted" style="font-size:11.5px">📅 유통기한 ${esc(it.expiry)}</div>` : ''}</td>
-          <td class="n ${send <= 0 ? 'zero' : ''}">${send}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
+            : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}${it.expiry ? `<div class="muted" style="font-size:11.5px">📅 유통기한 ${esc(it.expiry)}</div>` : ''}
+          ${send > 0 ? `<div style="margin-top:4px"><button class="btn mini ghost" onclick="srOpen(${DL.inv.indexOf(it)})">↩️ 구매처 반품</button></div>` : ''}</td>
+          <td class="n ${send <= 0 ? 'zero' : ''}">${send}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.retHold) > 0 ? `<div class="rsv">반품대기 ${it.retHold}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
       }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
       + `</tbody></table></div>`
     : `<div class="empty">아직 등록된 재고가 없어요.<br>위에서 입고 등록을 하면 강사 검수 후 반영돼요.</div>`;
+  if ((DL.srets || []).length) {   // ↩️ 구매처 반품 접수 현황
+    h += `<div class="sec">↩️ 구매처 반품 접수</div>` + DL.srets.map(x => `<div class="item"><div class="h"><span class="t">${esc(plainName(x.product))}${x.option ? ' · ' + esc(x.option) : ''} × ${x.qty}</span>
+      <span class="pill ${x.done ? 'done' : 'wait'}">${esc(x.done ? (x.status.indexOf('재고X') >= 0 ? '처리완료' : '구매처로 넘김') : x.status)}</span></div>
+      <div class="m">→ ${esc(x.to)} · ${esc(x.reason)} · ${esc(fmtDT(x.at))}${x.invoice ? `<br>🚚 ${esc(x.courier || '')} ${esc(x.invoice)}` : ''}</div>
+      ${x.canCancel ? `<div class="act"><button class="btn ghost sm" onclick="srCancel('${esc(x.id)}')">접수 취소</button></div>` : ''}</div>`).join('');
+  }
   const hist = (DL.hist || []).slice(0, 15);
   if (hist.length) {
     h += `<div class="sec">🧾 최근 입출고</div><div id="invHist">` + hist.map((x, hi) => {
@@ -1069,7 +1531,7 @@ function paneShip() {
       const x = String(s.status || '');
       return st === 'wait' ? x.indexOf('접수') >= 0
            : st === 'done' ? x.indexOf('발송') >= 0
-           : st === 'return' ? x.indexOf('반품') >= 0 : true;
+           : st === 'return' ? (x.indexOf('반품') >= 0 || !!s.ret) : true;
     }).length;
     h += `<div class="chips shipChips">
       ${[['all','전체'],['wait','접수'],['done','발송완료'],['return','반품']].map(([k, t]) =>
@@ -1080,7 +1542,7 @@ function paneShip() {
     const x = String(s.status || ''), st = DL.shipTab || 'all';
     return st === 'wait' ? x.indexOf('접수') >= 0
          : st === 'done' ? x.indexOf('발송') >= 0
-         : st === 'return' ? x.indexOf('반품') >= 0 : true;
+         : st === 'return' ? (x.indexOf('반품') >= 0 || !!s.ret) : true;
   });
   h += shown.length ? shown.map(s => {
     const st = String(s.status || '');
@@ -1093,6 +1555,8 @@ function paneShip() {
       ${s.canCancel
         ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>`
         : (st.indexOf('접수') >= 0 ? `<div class="locked">🔒 ${esc(dlOneLine(s.cancelWhy) || '변경은 물류담당자에게 문의해주세요')}</div>` : '')}
+      ${dlRetBoxM(s)}
+      ${s.canReturn ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlReturn('${esc(s.at)}')">↩️ 반품접수</button></div>` : ''}
     </div>`;
   }).join('') : `<div class="empty">${DL.ship.length ? '조건에 맞는 배송요청이 없어요.' : '아직 배송요청이 없어요.'}</div>`;
   if (DL.ship.length) h += `<p class="muted" style="margin:8px 2px 0;font-size:12px">${shown.length}건 표시 중 (전체 ${DL.ship.length}건)</p>`;
@@ -1172,6 +1636,102 @@ window.dlCancel = async function (at) {
   try {
     const d = await dlApi('cancelShipping', { row: s.row, at });
     if (d && d.ok) { toast('취소했어요'); viewShip(); }
+    else alert((d && d.error) || '취소하지 못했어요.');
+  } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
+};
+
+// ↩️ 반품접수(10-23) — PC와 같은 두뇌·규칙
+const RET_REASONS_M = ['단순변심', '상품 불량·파손', '오배송', '기타'];
+function dlRetBoxM(s) {
+  const r = s.ret; if (!r) return '';
+  return `<div class="msgBox" style="margin-top:8px;font-size:12.5px"><b>↩️ ${esc(r.status)}</b> · ${esc(r.reason)} · ${esc(fmtDT(r.at))}
+    ${r.invoice ? `<br>반품송장 <b>${esc(r.invoice)}</b> ${esc(r.courier || '')} <button class="btn mini ghost" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(r.invoice)}').then(()=>toast('복사했어요'))">📋 복사</button>`
+      : '<br><span class="muted">반품송장은 보통 접수 다음 날 등록돼요. 등록되면 여기에 보여요.</span>'}
+    ${r.canCancel ? `<div class="row" style="margin-top:6px"><button class="btn mini ghost" onclick="dlReturnCancel('${esc(s.at)}')">반품접수 취소</button></div>` : ''}</div>`;
+}
+window.dlReturn = function (at) {
+  const s = (DL.ship || []).find(x => x.at === at); if (!s) return;
+  sheet(`<h3>↩️ 반품접수</h3>
+    <div class="m" style="font-size:13px">${esc(plainName(s.product))}${s.option ? ' · ' + esc(s.option) : ''} × ${s.qty}<br>→ ${esc(s.receiver || '')} · 송장 ${esc(s.invoice || '')}</div>
+    <label class="lbl">반품 사유</label><select id="retReasonM" style="width:100%">${RET_REASONS_M.map(x => `<option>${x}</option>`).join('')}</select>
+    <label class="lbl">반품 수량</label><input id="retQtyM" type="number" min="1" max="${s.qty}" value="${s.qty}">
+    <label class="lbl">회수할 분 (고객)</label><input id="retRecvM" type="text" value="${esc(s.receiver || '')}">
+    <label class="lbl">연락처</label><input id="retPhoneM" type="text" value="${esc(s.phone || '')}">
+    <label class="lbl">회수 주소</label><textarea id="retAddrM" rows="2" style="width:100%;box-sizing:border-box">${esc(s.addr || '')}</textarea>
+    <label class="lbl">물류담당자에게 남길 말 (선택)</label><input id="retMemoM" type="text" placeholder="예) 고객이 박스 개봉만 함">
+    <p class="muted" style="font-size:12px">접수하면 보통 다음 날 반품송장이 이 배송건에 표시돼요.</p>
+    <div class="row"><button class="btn" id="retSendM" onclick="dlReturnSend('${esc(s.at)}')">↩️ 반품접수 보내기</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`, true);
+};
+window.dlReturnSend = async function (at) {
+  const s = (DL.ship || []).find(x => x.at === at); if (!s) return;
+  const qty = Number(($('retQtyM') || {}).value) || 0, receiver = String(($('retRecvM') || {}).value || '').trim(), addr = String(($('retAddrM') || {}).value || '').trim();
+  if (qty < 1 || qty > Number(s.qty)) { alert(`반품 수량은 1~${s.qty}개로 적어주세요.`); return; }
+  if (!receiver || !addr) { alert('회수할 분과 회수 주소를 적어주세요.'); return; }
+  const b = $('retSendM'); if (b) { b.disabled = true; b.textContent = '보내는 중…'; }
+  try {
+    const d = await dlApi('requestReturn', { row: s.row, at, qty, receiver, addr, phone: String(($('retPhoneM') || {}).value || '').trim(),
+      reason: ($('retReasonM') || {}).value || '', memo: String(($('retMemoM') || {}).value || '').trim() });
+    if (d && d.ok) { toast('반품접수를 보냈어요'); closeSheet(true); viewShip(); return; }
+    alert((d && d.error) || '반품접수에 실패했어요.');
+  } catch (_) { alert('연결 오류로 보내지 못했어요. 목록에서 접수됐는지 확인해주세요.'); }
+  if (b) { b.disabled = false; b.textContent = '↩️ 반품접수 보내기'; }
+};
+window.dlReturnCancel = async function (at) {
+  const s = (DL.ship || []).find(x => x.at === at); if (!s || !s.ret) return;
+  if (!confirm('이 반품접수를 취소할까요?')) return;
+  try {
+    const d = await dlApi('cancelReturn', { id: s.ret.id });
+    if (d && d.ok) { toast('반품접수를 취소했어요'); viewShip(); }
+    else alert((d && d.error) || '취소하지 못했어요.');
+  } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
+};
+
+// ↩️ 구매처 반품(재고 → 구매처로 돌려보내기) — PC와 같은 두뇌·규칙
+window.srOpen = function (idx) {
+  const it = (DL.inv || [])[idx]; if (!it) return;
+  const can = Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0));
+  window._srIt = it;
+  sheet(`<h3>↩️ 구매처 반품</h3>
+    <p class="muted" style="font-size:12.5px">창고의 내 재고를 구매처로 돌려보내요. 구매처에 반품 신청은 <b>직접</b> 먼저 해주세요.</p>
+    <div class="m" style="font-size:13px"><b>${esc(plainName(it.product))}${it.option ? ' · ' + esc(it.option) : ''}</b> · 반품 가능 ${can}개</div>
+    <label class="lbl">반품 수량 (낱개)</label><input id="srQtyM" type="number" inputmode="numeric" min="1" max="${can}" value="${can}">
+    <label class="lbl">반품 사유</label><select id="srReasonM" style="width:100%">${RET_REASONS_M.map(x => `<option>${x}</option>`).join('')}</select>
+    <label class="lbl">구매처</label><input id="srToM" type="text" value="${esc(it.site || '')}" placeholder="예) G마켓 ○○상점">
+    <label class="lbl">어떻게 돌려보내나요?</label>
+    <select id="srMethodM" style="width:100%" onchange="$('srSendM').style.display=this.value==='send'?'':'none';$('srPickM').style.display=this.value==='send'?'none':''">
+      <option value="pickup">구매처 택배기사가 가지러 와요 (회수)</option><option value="send">사무실에서 구매처 주소로 보내주세요</option></select>
+    <div id="srPickM"><label class="lbl">회수 택배사 · 송장번호 (알면)</label>
+      <input id="srCourierM" type="text" placeholder="예) 롯데택배"><input id="srInvM" type="text" placeholder="나중에 나오면 비워두세요" style="margin-top:6px"></div>
+    <div id="srSendM" style="display:none"><label class="lbl">받는 분 · 연락처</label>
+      <input id="srRecvM" type="text" placeholder="받는 분"><input id="srPhoneM" type="text" placeholder="연락처" style="margin-top:6px">
+      <label class="lbl">구매처 반품 주소</label><textarea id="srAddrM" rows="2" style="width:100%;box-sizing:border-box"></textarea>
+      <p class="muted" style="font-size:12px">보내는 택배비는 잔액에서 차감될 수 있어요.</p></div>
+    <label class="lbl">물류담당자에게 남길 말 (선택)</label><input id="srMemoM" type="text">
+    <div class="row"><button class="btn" id="srBtnM" onclick="srSend()">↩️ 반품 접수</button><button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`, true);
+};
+window.srSend = async function () {
+  const it = window._srIt; if (!it) return;
+  const can = Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0));
+  const v = (id) => String(($(id) || {}).value || '').trim();
+  const qty = Number(v('srQtyM')) || 0, to = v('srToM'), method = v('srMethodM') || 'pickup';
+  if (qty < 1 || qty > can) { alert(`반품 수량은 1~${can}개로 적어주세요.`); return; }
+  if (!to) { alert('반품할 구매처를 적어주세요.'); return; }
+  const req = { product: it.product, option: it.option || '', qty, to, method, reason: v('srReasonM'), memo: v('srMemoM') };
+  if (method === 'send') { Object.assign(req, { receiver: v('srRecvM'), phone: v('srPhoneM'), addr: v('srAddrM') }); if (!req.receiver || !req.addr) { alert('보낼 곳(받는 분·주소)을 적어주세요.'); return; } }
+  else Object.assign(req, { courier: v('srCourierM'), invoice: v('srInvM') });
+  const b = $('srBtnM'); if (b) { b.disabled = true; b.textContent = '보내는 중…'; }
+  try {
+    const d = await dlApi('requestStockReturn', req);
+    if (d && d.ok) { toast('구매처 반품을 접수했어요'); closeSheet(true); viewShip(); return; }
+    alert((d && d.error) || '접수에 실패했어요.');
+  } catch (_) { alert('연결 오류로 보내지 못했어요. 재고에서 접수됐는지 확인해주세요.'); }
+  if (b) { b.disabled = false; b.textContent = '↩️ 반품 접수'; }
+};
+window.srCancel = async function (id) {
+  if (!confirm('이 구매처 반품 접수를 취소할까요?')) return;
+  try {
+    const d = await dlApi('cancelReturn', { id });
+    if (d && d.ok) { toast('반품 접수를 취소했어요'); viewShip(); }
     else alert((d && d.error) || '취소하지 못했어요.');
   } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
 };
@@ -1276,6 +1836,10 @@ function installRowHtml() {
 // ── 물류담당자 메시지: 확인 눌러야 닫히는 팝업 ──────────
 let MSG = { queue: [], showing: false };
 const msgAck = () => store.get('dlMsgAck', {}) || {};
+// '읽음' 비교값 = 답변 + 사진 장수 (PC와 같은 규칙) / 담당자 사진(누르면 새 창으로 크게) — 10-12
+const mMsgSig = (q) => { const r = String(q.reply || '').trim(); const n = (q.images || []).length; return n ? r + '#img' + n : r; };
+const mMsgImgs = (q) => (q.images || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">` +
+  q.images.map(u => `<a href="${esc(String(u).replace(/&sz=w\d+/, '&sz=w3000'))}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="답변 사진" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid #eee" onerror="this.style.display='none'"></a>`).join('') + `</div>` : '';
 const msgAckSave = (m) => store.set('dlMsgAck', m);
 
 async function checkLogisticsMessages() {
@@ -1286,13 +1850,13 @@ async function checkLogisticsMessages() {
   const list = d.inquiries || [];
   const ack = msgAck();
   if (!store.get('dlMsgInit', false)) {          // 처음 켠 기기: 기존 메시지는 읽음 처리
-    list.forEach(q => { const t = String(q.reply || '').trim(); if (t) ack[q.at] = t; });
+    list.forEach(q => { const t = String(q.reply || '').trim(); if (t) ack[q.at] = mMsgSig(q); });
     msgAckSave(ack); store.set('dlMsgInit', true);
     return;
   }
   list.forEach(q => {
     const t = String(q.reply || '').trim();
-    if (t && ack[q.at] !== t && !MSG.queue.some(x => x.at === q.at)) MSG.queue.push(q);
+    if (t && ack[q.at] !== mMsgSig(q) && !MSG.queue.some(x => x.at === q.at)) MSG.queue.push(q);
   });
   showNextMsg();
 }
@@ -1305,19 +1869,19 @@ function showNextMsg() {
   const qMsg = String(q.message || '').trim();   // 어떤 문의에 대한 답변인지 원래 질문도 보여줌
   const qBox = qMsg ? `<div class="msgQ"><b>내 문의</b><br>${nl2br(qMsg)}</div>` : '';
   sheet(`<h3>💬 물류담당자 답변</h3>
-    ${qBox}<div class="msgBox"><b>답변</b><br>${nl2br(q.reply || '')}</div>${more}
+    ${qBox}<div class="msgBox"><b>답변</b><br>${nl2br(q.reply || '')}${mMsgImgs(q)}</div>${more}
     <div class="row"><button class="btn" onclick="ackMsg()">확인했어요</button></div>`, true);
 }
 window.ackAllMsg = function () {   // 남은 메시지 한 번에 읽음 처리
   const m = msgAck();
-  MSG.queue.forEach(q => { m[q.at] = String(q.reply || '').trim(); });
+  MSG.queue.forEach(q => { m[q.at] = mMsgSig(q); });
   msgAckSave(m);
   MSG.queue = []; MSG.showing = false;
   closeSheet(true);
 };
 window.ackMsg = function () {
   const q = MSG.queue.shift();
-  if (q) { const m = msgAck(); m[q.at] = String(q.reply || '').trim(); msgAckSave(m); }
+  if (q) { const m = msgAck(); m[q.at] = mMsgSig(q); msgAckSave(m); }
   MSG.showing = false;
   closeSheet(true);
   if (MSG.queue.length) setTimeout(showNextMsg, 250);
@@ -1334,7 +1898,9 @@ window.ackMsg = function () {
 function marginCalc(inp) {
   const bundlePrice = Math.max(0, Number(inp.bundlePrice) || 0);
   const point       = Math.max(0, Number(inp.point) || 0);        // 공급가에서 빠지는 포인트·할인
-  const netBundle   = Math.max(0, bundlePrice - point);           // 실제로 나간 돈
+  const cardPct     = Math.min(100, Math.max(0, Number(inp.cardPct) || 0));   // 카드 할인 % (10-27)
+  const card        = Math.round(Math.max(0, bundlePrice - point) * cardPct / 100);   // 포인트·할인 뺀 결제금액에서 카드할인
+  const netBundle   = Math.max(0, bundlePrice - point - card);    // 실제로 나간 돈
   const bundleQty   = Math.max(0, Number(inp.bundleQty) || 0);
   const sellQty     = Math.max(1, Number(inp.sellQty) || 1);
   const price = Math.max(0, Number(inp.price) || 0);
@@ -1352,7 +1918,7 @@ function marginCalc(inp) {
   const leftover = bundleQty - sets * sellQty;                    // 팔고 남는 개수
   const totalProfit = sets * profit;                              // 다 팔았을 때 총 이익
   const totalRoi = netBundle > 0 ? (totalProfit / netBundle) * 100 : 0;
-  return { price, bundlePrice, point, netBundle, bundleQty, sellQty, unitCost, cost, ship, fee,
+  return { price, bundlePrice, point, cardPct, card, netBundle, bundleQty, sellQty, unitCost, cost, ship, fee,
            profit, rate, roi, sets, leftover, totalProfit, totalRoi };
 }
 
@@ -1362,7 +1928,7 @@ function marginCalc(inp) {
 function marginTargetPrice(inp, targetRate) {
   const bundleQty = Math.max(0, Number(inp.bundleQty) || 0);
   const sellQty   = Math.max(1, Number(inp.sellQty) || 1);
-  const net = Math.max(0, (Number(inp.bundlePrice) || 0) - (Number(inp.point) || 0));   // 포인트 뺀 실제 지출
+  const net = marginCalc(Object.assign({}, inp, { price: 0 })).netBundle;   // 포인트·카드할인 뺀 실제 지출
   const unitCost  = bundleQty > 0 ? (net / bundleQty) : 0;
   const cost = unitCost * sellQty;
   const ship = Math.max(0, Number(inp.ship) || 0);
@@ -1388,6 +1954,7 @@ function viewMargin() {
       <label class="lbl">묶음 구매가 (원)</label><input id="mgBundlePrice" type="text" inputmode="numeric" placeholder="24000" oninput="mgRun()">
       <label class="lbl">묶음 수량 (개)</label><input id="mgBundleQty" type="text" inputmode="numeric" placeholder="10" oninput="mgRun()">
       <label class="lbl">포인트 · 할인 (원)</label><input id="mgPoint" type="text" inputmode="numeric" placeholder="공급가에서 빠지는 금액" oninput="mgRun()">
+      <label class="lbl">카드 할인 (%)</label><input id="mgCard" type="text" inputmode="decimal" placeholder="예) 7 (없으면 비움)" oninput="mgRun()">
       <div id="mgUnit"></div>
     </div>
     <div class="card">
@@ -1416,7 +1983,7 @@ function applyMgPrefill() {
   const p = MG_PREFILL; MG_PREFILL = null;
   const set = (id, v) => { if (v && $(id)) $(id).value = v; };
   set('mgBundlePrice', p.bundlePrice); set('mgBundleQty', p.bundleQty || 1);
-  set('mgPoint', p.point); set('mgSellQty', p.sellQty || 1); set('mgPrice', p.price);
+  set('mgPoint', p.point); set('mgCard', p.cardPct); set('mgSellQty', p.sellQty || 1); set('mgPrice', p.price);
   set('mgFee', p.feeRate);              // 할인 탭에서 정한 수수료
   if (p.ship !== undefined && $('mgShip')) $('mgShip').value = p.ship;   // 구성 같으면 0원
   const box = $('mgFrom');
@@ -1462,6 +2029,7 @@ function dealPtGrpOf(market) {
   if (m === '화해') return 'hwahae';
   if (m === '11번가') return 'st11';
   if (m === '네이버+스토어') return 'nplus';
+  if (m === '네이버 가격비교') return 'nplus';   // 가격비교 묶음소싱(10-29) — 네이버에서 사니 적립도 네이버 기준
   if (m === 'SSG') return 'ssg';
   if (m === '쿠팡') return 'coupang';
   if (m === '컬리') return 'kurly';
@@ -1518,7 +2086,8 @@ function dealBuy(it) {
 //  판매페이지(상세) 적립금은 리뷰 적립까지 섞여 있어 쓰면 안 된다 → 수집기가 목록 값만 담아 온다.
 function dealPoint(it) {
   const p = Number(it.point) || 0;
-  if (String(it.market || '') === '네이버+스토어' && p > 0) return p;
+  // 네이버 가격비교 묶음소싱도 수집기가 본사 슈퍼적립을 원 단위로 담아 온다(10-30 루크)
+  if ((String(it.market || '') === '네이버+스토어' || String(it.market || '') === '네이버 가격비교') && p > 0) return p;
   return Math.round(dealBuy(it) * dealPtRate(it.market));
 }
 // 카드 결제할인가·적립 — 상세페이지에서 못 가져왔으면 아무것도 안 보인다
@@ -1537,14 +2106,17 @@ function dealSellPrice(base, it) {
   return Math.max(0, (Number(base) || 0) - (Number(it.naverUndercut) || 0));
 }
 // 마진은 앱에서 다시 계산한다 — 적립 설정이 사람마다 달라서 서버 값을 그대로 쓸 수 없다
-// 택배비가 드는가 — 위탁으로 보낼 수 있으면 안 든다(루크 기준 09-07).
+// 택배비 — 사입 기준(루크 10-28: 위탁이 위험해 무조건 사무실로 받아 사입 후 발송)이라 판매 1건마다 항상 든다.
+//  아래 위탁 셈법(DEAL_WITAK=true 일 때만)은 예전 기준(09-07)으로 남겨둔다.
+const DEAL_WITAK = false;
+// (위탁 셈법) 위탁으로 보낼 수 있으면 안 든다.
 //  배수 1   → 딜 1개 그대로 위탁 → 0원
 //  배수 0.5 → 딜 2개를 주문해 손님에게 바로 위탁 → 0원 (내가 받아서 합치는 게 아니다)
 //  배수 4   → 4개들이를 받아 1개씩 쪼개 보내야 함 → 3,000원
 //  즉, 딜을 정수 개 주문해 카탈로그 구성과 딱 맞출 수 있으면 위탁이다.
 function dealShipFor(ratio) {
   const r = Number(ratio) || 0;
-  if (!r) return DEAL_SHIP;
+  if (!DEAL_WITAK || !r) return DEAL_SHIP;
   const k = 1 / r;                        // 카탈로그 1건을 채우는 데 필요한 딜 개수
   return (Math.abs(k - Math.round(k)) < 0.01 && Math.round(k) >= 1) ? 0 : DEAL_SHIP;
 }
@@ -1565,6 +2137,8 @@ function dealBestMargin(it) {
   const xs = [m.rep, m.unit].filter(v => v !== null);
   return xs.length ? Math.max.apply(null, xs) : null;
 }
+// 11-03 루크: 마진이 마이너스(어떻게 팔아도 손해)인 상품은 목록에서 아예 뺀다 — PC와 같은 규칙
+function dealIsLoss(it) { const b = dealBestMargin(it); return b !== null && b < 0; }
 function dealToMargin(code) {
   const it = (DEALS.items || []).find(x => String(x.goodscode) === String(code));
   if (!it) return;
@@ -1591,7 +2165,7 @@ function dealNaverLine(it) {
   const money = (v) => (v > 0 ? '+' : '') + v.toLocaleString() + '원';
   const row = (label, base, margin, qtyTxt) => {
     let h = `<span class="dealNvPrice">${qtyTxt} 최저 <b>${base.toLocaleString()}원</b></span>`;
-    if (margin !== null) h += `<span class="${margin > 0 ? 'dealWin' : 'dealLose'}">${label} ${money(margin)}</span>`;
+    if (margin !== null && margin >= 0) h += `<span class="${margin > 0 ? 'dealWin' : 'dealLose'}">${label} ${money(margin)}</span>`;
     return `<div class="dealNvRow">${h}</div>`;
   };
   let out = '';
@@ -1607,7 +2181,7 @@ function dealNaverLine(it) {
 
 function mgNum(id) { const el = $(id); return el ? Number(String(el.value).replace(/[^0-9.]/g, '')) || 0 : 0; }
 function mgInput() {
-  return { bundlePrice: mgNum('mgBundlePrice'), point: mgNum('mgPoint'), bundleQty: mgNum('mgBundleQty'),
+  return { bundlePrice: mgNum('mgBundlePrice'), point: mgNum('mgPoint'), cardPct: mgNum('mgCard'), bundleQty: mgNum('mgBundleQty'),
            sellQty: mgNum('mgSellQty'), price: mgNum('mgPrice'),
            ship: mgNum('mgShip'), feeRate: mgNum('mgFee') };
 }
@@ -1619,7 +2193,7 @@ window.mgRun = function () {
   const u = $('mgUnit');
   if (u) u.innerHTML = (v.bundlePrice && v.bundleQty)
     ? `<div class="mgUnit">개당 원가 <b>${wonFmt(r.unitCost)}원</b>
-         <span class="muted">${r.point ? `(${wonFmt(r.bundlePrice)} − 포인트 ${wonFmt(r.point)})` : `${wonFmt(r.bundlePrice)}원`} ÷ ${v.bundleQty}개</span></div>`
+         <span class="muted">${(r.point || r.card) ? `(${wonFmt(r.bundlePrice)}${r.point ? ` − 포인트 ${wonFmt(r.point)}` : ''}${r.card ? ` − 카드 ${r.cardPct}% ${wonFmt(r.card)}` : ''})` : `${wonFmt(r.bundlePrice)}원`} ÷ ${v.bundleQty}개</span></div>`
     : `<div class="mgUnit off">묶음 구매가와 수량을 넣으면 개당 원가가 나와요.</div>`;
 
   const box = $('mgOut'); if (!box) return;
@@ -1642,8 +2216,9 @@ window.mgRun = function () {
     <div class="mgTotal ${r.totalProfit > 0 ? '' : 'bad'}">
       <div class="mgTotHead">📦 이 묶음 하나를 다 팔면</div>
       <div class="mgTotRow"><span>판매 가능 건수</span><b>${r.sets}건</b></div>
-      <div class="mgTotRow"><span>들어간 돈${r.point ? ' (포인트 뺀 실지출)' : ' (묶음 구매가)'}</span><b>${wonFmt(r.netBundle)}원</b></div>
+      <div class="mgTotRow"><span>들어간 돈${(r.point || r.card) ? ' (할인 뺀 실지출)' : ' (묶음 구매가)'}</span><b>${wonFmt(r.netBundle)}원</b></div>
       ${r.point ? `<div class="mgTotRow"><span>ㄴ 포인트로 아낀 돈</span><b>${wonFmt(r.point)}원</b></div>` : ''}
+      ${r.card ? `<div class="mgTotRow"><span>ㄴ 카드할인(${r.cardPct}%)으로 아낀 돈</span><b>${wonFmt(r.card)}원</b></div>` : ''}
       <div class="mgTotRow big"><span>총 이익</span><b>${wonFmt(r.totalProfit)}원</b></div>
       <div class="mgTotRow"><span>투자금 대비 수익률</span><b>${r.totalRoi.toFixed(1)}%</b></div>
       ${r.leftover ? `<div class="mgTotNote">※ ${r.leftover}개가 남아요. 개수를 딱 나눠떨어지게 잡으면 손해가 없어요.</div>` : ''}
@@ -1756,13 +2331,164 @@ window.openDealChoice = function (code) {
   // 재렌더 없이 해당 행만 '봤음'으로(스크롤 유지) → 어디까지 봤는지 표시
   try { const el = document.querySelector('.dealRow2[data-code="' + code + '"]'); if (el) el.classList.add('viewed'); } catch (_) {}
   const nv = String(it.naverUrl || '').trim();
+  if (it.locked) { openDealLocked(it); return; }
   if (!nv) { window.openDeal(it.url); return; }
-  sheet(`<h3>어디로 갈까요?</h3>
-    <p class="muted" style="margin:6px 0 14px;line-height:1.6">${esc(String(it.name || '').slice(0, 60))}</p>
-    <button class="btn" onclick="closeSheet();openDeal('${esc(it.url)}')">🛒 ${esc(it.market || '오픈마켓')}에서 보기</button>
-    <button class="btn ghost" style="margin-top:8px" onclick="closeSheet();openDeal('${esc(nv)}')">🟢 네이버 가격비교에서 보기</button>
-    <button class="btn ghost" style="margin-top:8px" onclick="closeSheet()">← 할인 목록으로 돌아가기</button>`);
+  // ① 확인 → ② 찜하기 → ③ 등록 (PC와 같은 순서) — 찜한 뒤엔 세 가지 확인이 ③ 링크 복사를 연다
+  const max = dealClaimMax(), cnt = Number(it.claimCnt) || 0, code2 = esc(it.goodscode);
+  const chks = `<label class="dealChkRow"><input type="checkbox" class="dealChk" onchange="dealCheckStep()"> 네이버 상품과 <b>같은 상품·같은 용량</b>이에요</label>
+       <label class="dealChkRow"><input type="checkbox" class="dealChk" onchange="dealCheckStep()"> <b>구성 수량</b>(몇 개입·묶음)을 맞춰 봤어요</label>
+       <label class="dealChkRow"><input type="checkbox" class="dealChk" onchange="dealCheckStep()"> 오픈마켓 <b>배송비·실제 결제가</b>를 확인했어요</label>`;
+  const m = dealBestMargin(it), unit = Number(it.naverUnitPrice) || 0, rep = Number(it.naverRepPrice) || 0;
+  const sell = dealSellPrice(unit > 0 ? unit : rep, it);
+  const al = it.claimed ? dealClaimAlert((DEALS.myClaims || []).find(c => String(c.goodscode) === String(it.goodscode) && c.market === it.market) || { market: it.market, goodscode: it.goodscode, margin: m, price: it.price }) : '';
+  const step2 = it.claimed
+    ? `<div class="dealStepDone">✅ 찜 완료 — 내 자리예요 (${cnt}/${max}명)</div>
+       <button class="btn ghost" style="margin-top:6px;padding:7px" onclick="dealUnclaim('${esc(it.market || '')}','${code2}')">찜 풀기</button>`
+    : `${chks}
+       <button class="btn" id="dealClaimBtn" disabled style="margin-top:8px" onclick="dealClaim('${code2}')">🙋 찜하기 (선착순 ${max}명 · 지금 ${cnt}명)</button>
+       <div class="muted" style="font-size:11.5px;margin-top:4px">세 가지를 다 확인해야 찜할 수 있어요. ${max}명이 차면 찜한 분 화면에만 남아요.</div>
+       ${DEALS.myQuota ? `<div class="dealQuota">${dealQuotaText()}</div>` : ''}`;
+  sheet(`<h3>🧭 이 상품 올려보기</h3>
+    <p class="muted" style="margin:6px 0 10px;line-height:1.6">${esc(String(it.name || '').slice(0, 70))}
+      ${m !== null ? `<br><b style="color:${m > 0 ? '#1e7a46' : '#c0392b'}">예상 마진 ${(m > 0 ? '+' : '') + m.toLocaleString()}원</b>` : ''}${dealNewbie(it) ? ' <span class="tagNewbie">⭐ 초보 추천</span>' : ''}</p>
+    ${al ? `<div class="dealClaimAlert" style="margin-bottom:10px">⚠ ${esc(al)}</div>` : ''}
+    <div class="dealStep"><div class="dealStepT">① 확인</div>
+      <button class="btn ghost" style="padding:8px" onclick="openDeal('${esc(it.url)}')">🛒 ${esc(it.market || '오픈마켓')}에서 보기</button>
+      <button class="btn ghost" style="margin-top:6px;padding:8px" onclick="openDeal('${esc(nv)}')">🟢 네이버 가격비교 보기</button></div>
+    <div class="dealStep"><div class="dealStepT">② 찜하기</div>${step2}</div>
+    <div class="dealStep${it.claimed ? '' : ' dealStepOff'}"><div class="dealStepT">③ 등록</div>
+      ${it.claimed ? `${chks}
+      <button class="btn" id="dealCopyBtn" disabled style="margin-top:8px" onclick="dealCopyCatalog('${esc(nv)}')">📋 카탈로그 링크 복사</button>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">① 확인에서 세 가지를 다 확인해야 복사할 수 있어요.</div>
+      <div class="muted" style="font-size:12px;line-height:1.7;margin-top:6px">등록은 <b>PC 자동등록 프로그램(크롬 확장)</b>의 <b>[대량등록]</b> 칸에 이 링크를 붙여넣어 해요. 찜은 PC 앱 '내 찜'에도 그대로 있으니 PC에서 복사해도 돼요.${sell > 0 ? `<br>권장 판매가 <b>${sell.toLocaleString()}원</b>` : ''}</div>`
+      : `<div class="muted" style="font-size:12px">찜을 하면 열려요.</div>`}</div>
+    <button class="btn ghost" style="margin-top:4px" onclick="closeSheet()">← 할인 목록으로 돌아가기</button>`);
 };
+// 🔒 잠긴 상품 — 상품명·링크는 찜해야 열린다(루크 11-01). 마진·가격·판매처 수만 보고 고른다.
+function openDealLocked(it) {
+  const max = dealClaimMax(), cnt = Number(it.claimCnt) || 0, m = dealBestMargin(it), malls = Number(it.naverMalls) || 0;
+  sheet(`<h3>🔒 찜하면 열리는 상품</h3>
+    <p class="muted" style="margin:6px 0 10px;line-height:1.7">
+      ${m !== null ? `<b style="color:${m > 0 ? '#1e7a46' : '#c0392b'}">예상 마진 ${(m > 0 ? '+' : '') + m.toLocaleString()}원</b>` : ''}${dealNewbie(it) ? ' <span class="tagNewbie">⭐ 초보 추천</span>' : ''}<br>
+      ${esc(it.market || '')}${it.price ? ` · 매입 ${Number(it.price).toLocaleString()}원` : ''}${it.category ? ` · ${esc(it.category)}` : ''}${malls ? ` · 네이버 판매처 ${malls}곳` : ''}</p>
+    <div class="dealStep"><div class="dealStepT">① 찜하기</div>
+      <div class="muted" style="font-size:12.5px;line-height:1.7">모두에게 공평하도록 마진 남는 상품은 <b>찜한 분(선착순 ${max}명)께만</b> 상품명과 링크가 열려요.<br>
+        확인해보고 안 맞으면 '찜 풀기'를 하면 돼요. <b>단, 오늘 새 찜 개수는 돌아오지 않아요.</b></div>
+      <button class="btn" id="dealClaimBtn" style="margin-top:8px" onclick="dealClaim('${esc(it.goodscode)}')">🙋 찜하고 상품 보기 (지금 ${cnt}/${max}명)</button>
+      ${DEALS.myQuota ? `<div class="dealQuota">${dealQuotaText()}</div>` : ''}</div>
+    <div class="dealStep dealStepOff"><div class="dealStepT">② 확인 → ③ 등록</div><div class="muted" style="font-size:12px">찜을 하면 열려요.</div></div>
+    <button class="btn ghost" style="margin-top:4px" onclick="closeSheet()">← 할인 목록으로 돌아가기</button>`);
+}
+// ── 🙋 찜하기 · ⭐ 초보 추천 (PC와 같은 규칙) ──
+//  상품마다 선착순 3명(두뇌가 셈) · 3명이 차면 찜한 사람에게만 보인다(두뇌가 남의 목록에서 뺀다).
+function dealClaimMax() { return Number(DEALS.claimMax) || 3; }
+//  초보 추천·찜 한도는 두뇌가 정한다(사람마다 적립 설정이 달라 앱 계산이면 한도 판정이 어긋난다)
+function dealNewbie(it) { return !!(it && it.newbie); }
+function dealQuotaText() {
+  const q = DEALS.myQuota; if (!q) return '';
+  return `내 찜 <b>${q.held}/${q.heldMax}</b> · 오늘 새 찜 <b>${q.today}/${q.todayMax}</b> · ⭐ 초보 추천 <b>${q.newbie}/${q.newbieMax}</b>`;
+}
+function dealClaimTags(it) {
+  let b = '';
+  if (dealNewbie(it)) b += `<span class="tagNewbie">⭐ 초보 추천</span>`;
+  if (it.claimed) b += `<span class="tagMine">🙋 내가 찜</span>`;
+  else if (Number(it.claimCnt) > 0) b += `<span class="tagClaim">🙋 ${Number(it.claimCnt)}/${dealClaimMax()}명</span>`;
+  return b;
+}
+function dealFind(market, code) {
+  return (DEALS.items || []).find(x => String(x.goodscode) === String(code) && String(x.market || '') === String(market || '')) || null;
+}
+// 찜한 뒤 마진이 바뀌면 '판매 중지'가 아니라 '마진변동을 확인하세요'로 알린다(루크 10-31)
+function dealClaimAlert(c) {
+  const cur = dealFind(c.market, c.goodscode);
+  if (!cur) return '할인이 끝났거나 목록에서 내려갔어요. 마진변동을 확인하세요.';
+  const now = dealBestMargin(cur), was = (c.margin === null || c.margin === undefined) ? null : Number(c.margin);
+  const won = (n) => (n > 0 ? '+' : '') + Number(n).toLocaleString() + '원';
+  if (now !== null && was !== null && (Math.abs(now - was) >= 1000 || (now <= 0 && was > 0)))
+    return `마진변동을 확인하세요. 찜할 때 ${won(was)} → 지금 ${won(now)}`;
+  if (Number(c.price) > 0 && Number(cur.price) > 0 && Number(cur.price) !== Number(c.price))
+    return `매입가가 바뀌었어요(${Number(c.price).toLocaleString()} → ${Number(cur.price).toLocaleString()}원). 마진변동을 확인하세요.`;
+  return '';
+}
+function dealMyClaimsHtml() {
+  const my = DEALS.myClaims || [];
+  if (!my.length) return `<div class="empty">아직 찜한 상품이 없어요.<br>⭐ 초보 추천 상품부터 ① 확인 → ② 찜하기 → ③ 등록 순서로 해보세요.</div>`;
+  return my.map(c => {
+    const al = dealClaimAlert(c), cur = dealFind(c.market, c.goodscode);
+    return `<div class="card dealRow2${al ? ' dealAlertRow' : ''}" ${cur ? `onclick="openDealChoice('${esc(c.goodscode)}')"` : ''}>
+      <span class="dealPct2 none">🙋</span>
+      <div class="dealBody">
+        <div class="dealNm">${esc(c.name)}</div>
+        <div class="dealMt">${c.market ? `<span class="tagMkt">${esc(c.market)}</span>` : ''}${c.at ? ` <span class="muted" style="font-size:11px">찜 ${esc(c.at)}</span>` : ''}</div>
+        ${al ? `<div class="dealClaimAlert">⚠ ${esc(al)}</div>` : ''}
+      </div>
+      <span class="dealAct"><button class="chip" onclick="event.stopPropagation();dealUnclaim('${esc(c.market)}','${esc(c.goodscode)}')">찜 풀기</button></span>
+    </div>`;
+  }).join('');
+}
+window.dealCheckStep = function () {
+  const n = document.querySelectorAll('.dealChk:checked').length, all = document.querySelectorAll('.dealChk').length;
+  const b = $('dealClaimBtn'); if (b) b.disabled = n < all;
+  const c = $('dealCopyBtn'); if (c) c.disabled = n < all;
+};
+window.dealClaim = async function (code) {
+  const it = (DEALS.items || []).find(x => String(x.goodscode) === String(code));
+  if (!it) return;
+  const b = $('dealClaimBtn'); if (b) { b.disabled = true; b.textContent = '찜하는 중...'; }
+  try {
+    const d = await api('dealClaim', { market: it.market || '', goodscode: it.goodscode, margin: dealBestMargin(it) });
+    if (d && d.quota) DEALS.myQuota = d.quota;
+    if (d && d.ok) {
+      // 🔒 잠겨 있던 상품이면 두뇌가 진짜 상품명·링크를 같이 보내준다 → 그대로 갈아 끼운다
+      if (d.item) { const was = it.locked; Object.assign(it, d.item); it.locked = false; if (was) markDealViewed(it.goodscode); }
+      it.claimed = true; it.claimCnt = d.claimCnt || it.claimCnt;
+      const my = (DEALS.myClaims = DEALS.myClaims || []);
+      if (!my.some(c => String(c.goodscode) === String(it.goodscode) && c.market === it.market))
+        my.unshift({ market: it.market, goodscode: it.goodscode, name: it.name, price: it.price, naverUrl: it.naverUrl, margin: dealBestMargin(it), newbie: !!it.newbie, at: '' });
+      toast('찜했어요! 상품명과 링크가 열렸어요');
+      openDealChoice(it.goodscode); return;
+    }
+    alert((d && d.error) || '찜하지 못했어요.');
+    if (d && d.full) { DEALS.items = (DEALS.items || []).filter(x => x !== it); closeSheet(); renderDeals(); return; }
+    if (d && d.reason) { openDealChoice(code); return; }   // 한도에 걸림 — 이유는 위 알림, 남은 개수 표시를 새로
+  } catch (e) { alert('연결 오류로 찜하지 못했어요. 잠시 뒤 다시 눌러주세요.'); }
+  if (b) { b.disabled = false; b.textContent = '🙋 찜하기'; }
+};
+window.dealUnclaim = async function (market, code) {
+  const days = (DEALS.myQuota || {}).days || 7;
+  if (!confirm(`찜을 풀까요? 자리가 다른 분께 넘어가요.\n\n· 오늘 새 찜 개수는 돌아오지 않아요\n· 이 상품은 ${days}일 동안 다시 찜할 수 없어요`)) return;
+  try {
+    const d = await api('dealUnclaim', { market, goodscode: code });
+    if (d && d.quota) DEALS.myQuota = d.quota;
+    if (d && d.ok) {
+      const it = dealFind(market, code); if (it) { it.claimed = false; it.claimCnt = Math.max(0, (Number(it.claimCnt) || 1) - 1); }
+      DEALS.myClaims = (DEALS.myClaims || []).filter(c => !(String(c.goodscode) === String(code) && c.market === market));
+      toast('찜을 풀었어요');
+    }
+  } catch (_) { alert('연결 오류'); }
+  closeSheet(); renderDeals();
+};
+window.dealCopyCatalog = function (url) {
+  const u = String(url || '').trim(); if (!u) return;
+  const done = () => toast('카탈로그 링크를 복사했어요');
+  try { navigator.clipboard.writeText(u).then(done, () => prompt('아래 링크를 복사하세요', u)); }
+  catch (_) { prompt('아래 링크를 복사하세요', u); }
+};
+// 찜한 상품 마진이 바뀌면 수집분마다 한 번만 알린다(앱 안 알림)
+function dealClaimNotify() {
+  const at = String(DEALS.updatedAt || '');
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem('dealClaimAlertSeen') || '{}') || {}; } catch (_) { seen = {}; }
+  let n = 0;
+  (DEALS.myClaims || []).forEach(c => {
+    if (!dealClaimAlert(c)) return;
+    const k = `${c.market}|${c.goodscode}`;
+    if (seen[k] === at) return;
+    seen[k] = at; n++;
+  });
+  if (n) toast(`🙋 찜한 상품 ${n}개 — 마진변동을 확인하세요 (내 찜)`);
+  try { localStorage.setItem('dealClaimAlertSeen', JSON.stringify(seen)); } catch (_) {}
+}
 // 캐시로 먼저 띄운 뒤 뒤에서 새로 받아온다. 내용이 그대로면 화면을 건드리지 않는다
 async function refreshDealsQuietly() {
   let d = null;
@@ -1770,7 +2496,7 @@ async function refreshDealsQuietly() {
   if (!d || !d.ok) return;
   if (!d.items || !d.items.length) return;        // 빈 목록(콜드 스타트)은 무시 — 보던 목록을 지우지 않는다
   const changed = String(d.updatedAt || '') !== String(DEALS.updatedAt || '');
-  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || '';
+  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || ''; DEALS.myClaims = d.myClaims || []; DEALS.claimMax = d.claimMax || 3; DEALS.myQuota = d.myQuota || null;
   if (changed && document.getElementById('dealListMark')) renderDeals();
 }
 
@@ -1800,8 +2526,9 @@ async function viewDeals() {
     $('pane').innerHTML = `<div class="empty">할인정보를 불러오는 중이에요.<br>잠시 뒤에 다시 눌러주세요.<br><br><button onclick="viewDeals()">다시 시도</button></div>`;
     return;
   }
-  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || '';
+  DEALS.items = d.items || []; DEALS.updatedAt = d.updatedAt || ''; DEALS.myClaims = d.myClaims || []; DEALS.claimMax = d.claimMax || 3; DEALS.myQuota = d.myQuota || null;
   renderDeals();
+  dealClaimNotify();
 }
 function renderDeals() {
   const items = DEALS.items;
@@ -1813,14 +2540,17 @@ function renderDeals() {
     h += `<div class="empty">아직 등록된 할인정보가 없어요.</div>`;
     $('pane').innerHTML = h; refreshPushBtn(); return;
   }
-  const plain = items.filter(x => !x.bundle);
+  const plain = items.filter(x => !x.bundle && !dealIsLoss(x));   // 마이너스 마진은 숨김(11-03)
   const bundles = items.filter(x => x.bundle);
   const nHot = plain.filter(x => x.hot).length, nLow = plain.filter(x => x.low).length;
   const chip = (f, t) => `<button class="chip ${DEALS.filter === f ? 'on' : ''}" onclick="setDealFilter('${f}')">${t}</button>`;
   h += `<span id="dealListMark" hidden></span>`;   // 아직 목록을 보고 있는지 판단용
   const nWin = plain.filter(x => (dealBestMargin(x) || 0) > 0).length;
   h += dealPtBar();
-  h += `<div class="chips" style="margin:10px 0">${chip('all', `전체 ${plain.length}`)}${chip('hot', `🔥 핫딜 ${nHot}`)}${nLow ? chip('low', `📉 최저가 ${nLow}`) : ''}${nWin ? chip('win', `💰 마진 ${nWin}`) : ''}${bundles.length ? chip('bundle', `📦 모음전 ${bundles.length}`) : ''}</div>`;
+  const nNew = plain.filter(dealNewbie).length, myN = (DEALS.myClaims || []).length;
+  const myAlert = (DEALS.myClaims || []).filter(c => dealClaimAlert(c)).length;
+  h += `<div class="dealSteps">⭐ 처음이면 <b>초보 추천</b>부터 — 마진 남는 상품은 <b>🔒 찜한 분(선착순 ${dealClaimMax()}명)께만 상품명·링크가 열려요.</b> 누르면 <b>찜하기 → 확인 → 등록</b> 순서로 안내해요.</div>`;
+  h += `<div class="chips" style="margin:10px 0">${chip('all', `전체 ${plain.length}`)}${nNew ? chip('newbie', `⭐ 초보 추천 ${nNew}`) : ''}${chip('mine', `🙋 내 찜 ${DEALS.myQuota ? `${DEALS.myQuota.held}/${DEALS.myQuota.heldMax}` : myN}${myAlert ? ` ⚠${myAlert}` : ''}`)}${chip('hot', `🔥 핫딜 ${nHot}`)}${nLow ? chip('low', `📉 최저가 ${nLow}`) : ''}${nWin ? chip('win', `💰 마진 ${nWin}`) : ''}${bundles.length ? chip('bundle', `📦 모음전 ${bundles.length}`) : ''}</div>`;
   // 카테고리 필터 — 있는 것만(개수와 함께)
   const CAT_ORDER = ['뷰티', '건강식품', '식품', '생활', '기타'];
   const catCount = {};
@@ -1835,15 +2565,23 @@ function renderDeals() {
   if (DEALS.filter === 'bundle') list = bundles;
   if (DEALS.filter === 'win') list = plain.filter(x => (dealBestMargin(x) || 0) > 0)
     .sort((a, b) => (dealBestMargin(b) || 0) - (dealBestMargin(a) || 0));
+  if (DEALS.filter === 'newbie') list = plain.filter(dealNewbie)
+    .sort((a, b) => (dealBestMargin(b) || 0) - (dealBestMargin(a) || 0));
   if (DEALS.cat !== 'all') list = list.filter(x => dealCategoryOf(x) === DEALS.cat);
+  if (DEALS.filter === 'mine') {
+    const q = DEALS.myQuota;
+    h += (q ? `<div class="dealQuota">${dealQuotaText()}</div>` : '')
+      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${q ? q.days : 7}일 동안 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 한 번에 ${q ? q.heldMax : 5}개 · 하루 ${q ? q.todayMax : 3}개 · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>` + dealMyClaimsHtml();
+    $('pane').innerHTML = h; refreshPushBtn(); return;
+  }
   h += list.slice(0, 100).map(it => `
     <div class="card dealRow2${_dealViewed.has(String(it.goodscode)) ? ' viewed' : ''}" data-code="${esc(it.goodscode)}" onclick="openDealChoice('${esc(it.goodscode)}')">
       <span class="dealPct2${it.discountPct ? '' : ' none'}">${it.discountPct ? it.discountPct + '%' : '-'}</span>
       <div class="dealBody">
-        <div class="dealNm">${esc(it.name)}</div>
+        <div class="dealNm${it.locked ? ' dealLocked' : ''}">${esc(it.name)}${it.locked && it.category ? ` <i>· ${esc(it.category)}</i>` : ''}</div>
         <div class="dealMt"><b>${it.price ? Number(it.price).toLocaleString() + '원' : ''}</b>${dealCardLine(it)}
           ${it.market ? `<span class="tagMkt">${esc(it.market)}</span>` : ''}
-          ${it.low ? `<span class="tagLow">📉 3개월 최저가</span>` : (it.hot ? `<span class="tagHot">🔥 핫딜</span>` : '')}
+          ${it.low ? `<span class="tagLow">📉 3개월 최저가</span>` : (it.hot ? `<span class="tagHot">🔥 핫딜</span>` : '')}${dealClaimTags(it)}
         </div>
         ${dealNaverLine(it)}
       </div>
@@ -1906,8 +2644,9 @@ async function checkNegativeBalance() {
     session = s; enterMain();
     checkNegativeBalance();          // 미수금이면 안내가 화면을 덮는다
     if (location.hash === '#deals') go('deals');    // 푸시 알림 눌러 들어온 경우 → 할인 탭
+    if (location.hash === '#pt') go('pt');          // 📈 가격 알림 눌러 들어온 경우
     // 강사가 기수를 바꿨으면 따라잡는다 (바뀌면 화면도 새로 그림)
-    refreshSessionCohort().then(function (ch) { if (ch && location.hash !== '#deals') enterMain(); });
+    refreshSessionCohort().then(function (ch) { if (ch && location.hash !== '#deals' && location.hash !== '#pt') enterMain(); });
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

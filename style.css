@@ -318,3 +318,45 @@ label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:p
 .gbImg{display:block;max-width:100%;max-height:200px;border-radius:8px;margin-top:6px}
 .gbJoin{width:100%}
 .tab{letter-spacing:-.5px;font-size:10px}
+.gbBanner{cursor:pointer;border:1.5px solid #f3c6d2;background:#fff7fa}
+.gbBanner .m{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* 🙋 찜하기 · ⭐ 초보 추천 */
+.tagNewbie{color:#8a5a00;background:#fff4d6;border-radius:5px;padding:1px 6px;font-weight:700;margin-left:3px}
+.tagClaim{color:#5b4bb7;background:#efecfc;border-radius:5px;padding:1px 6px;font-weight:700;margin-left:3px}
+.tagMine{color:#fff;background:#6c5ce7;border-radius:5px;padding:1px 6px;font-weight:700;margin-left:3px}
+.dealSteps{font-size:12.5px;line-height:1.6;background:#fffaf0;border:1px solid #f3e2b8;border-radius:8px;padding:7px 10px;margin:8px 0 0}
+.dealStep{border:1px solid #e6e6ee;border-radius:10px;padding:10px 12px;margin:0 0 9px}
+.dealStep.dealStepOff{opacity:.55}
+.dealStepT{font-weight:800;font-size:13px;margin-bottom:7px}
+.dealChkRow{display:flex;gap:7px;align-items:center;font-size:13px;padding:4px 0}
+.dealStepDone{font-size:13px;color:#1e7a46;font-weight:700}
+.dealClaimAlert{font-size:12px;color:#a35a00;background:#fff3e0;border-radius:6px;padding:4px 8px;margin-top:4px}
+.dealRow2.dealAlertRow{border-left:3px solid #f39c12}
+.dealQuota{font-size:12px;background:#f4f2fd;color:#4b3fa0;border-radius:6px;padding:5px 9px;margin:6px 0}
+
+/* 🔒 찜하면 열리는 상품 — 상품명 자리 */
+.dealNm.dealLocked { color: #8a6d1d; font-weight: 600; }
+.dealNm.dealLocked i { font-style: normal; font-weight: 400; color: #999; }
+/* 🏢 온라인 사무실(11-02) */
+.ofCard{background:#f2faf4;border:1px solid #b9e0c3}
+.ofHead{margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:15.5px;color:#1f4d2c}
+.ofBadge{font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 9px}
+.ofBadge.on{background:#d6f2dd;color:#1e7b3a}
+.ofBadge.soon{background:#fdf0d0;color:#9a6a12}
+.ofTime{font-size:12.5px;color:#5b6f60;margin:6px 0 8px}
+.ofLine{display:flex;align-items:center;gap:8px;margin:6px 0}
+.ofLbl{width:58px;font-size:12.5px;color:#5b6f60}
+.ofVal{flex:1;font-size:16px;letter-spacing:.5px;color:#18321f;word-break:break-all}
+.ofNotice{font-size:12.5px;color:#44584a;background:#fff;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6}
+
+/* 🚫 소싱주의 */
+.swCount{margin:6px 2px 2px;font-size:12px}
+.swCard{border:1px solid #f3c9a0;background:#fff8f0}
+.swCard.high{border-color:#f1b0aa;background:#fdf1f0}
+.swHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:15.5px;color:#3a2320}
+.swBadge{font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 9px;background:#fde3c6;color:#9a5512}
+.swBadge.high{background:#f9d3cf;color:#b3261e}
+.swDate{margin-left:auto;font-size:11.5px;color:#9a8a86}
+.swProd{font-size:13.5px;color:#4a3a36;margin-top:6px}
+.swReason{font-size:12.5px;color:#6a5853;background:#fff;border-radius:8px;padding:7px 10px;margin-top:8px;line-height:1.6}

@@ -4,7 +4,8 @@ window.BRAIN = {
   "questionsUrl": "https://script.google.com/macros/s/AKfycbyb_SUrRREo7GQeUKjsBC_ao1HzuFLIxctB0J8Wiy_97NxkWz64FMm7xFGnvhtsiv3pNQ/exec",
   "coachingUrl": "https://script.google.com/macros/s/AKfycbzlzOVYceS1kyG52X06PpEaV11nMa2h5K1EUYGoK3kfRkTWF2cgympGUcDb-sgv_4kZ/exec",
   "deliveryUrl": "https://script.google.com/macros/s/AKfycbyUifes_3Wa_WKdgnCIYfvO4Ckb9cn6xI-Ne3fPiE-jaB9wBqaG1g17H5KUjvb-Qe11/exec",
-  "rechargeUrl": "https://sourcinglab.imweb.me/shop_view?idx=5"
+  "rechargeUrl": "https://sourcinglab.imweb.me/shop_view?idx=5",
+  "suggestUrl": ""
 };
 
 // 할인 알림(웹푸시) 공개키 — 딜워치(dealwatch)의 VAPID 키와 쌍. 바꾸면 기존 구독 전부 무효.
@@ -14,6 +15,6 @@ window.PUSH_PUBKEY = 'BGYTNc0dBZ6ThtxwzI14C11_r89Oy3hYr-E8dZhO-OVsjTB6vXCg4lynas
 //  여기에 없는 기수는 컨설팅이 열리지 않는다(다른 강사 시트로 새어 들어가지 않게).
 window.COACHING = [
   { name: '유믿음', cohorts: ['찐초보 1기', '찐초보 2기', '찐초보 3기', '찐초보 4기', '찐초보 5기'], url: '' },
-  { name: '뷰셀', cohorts: ['뷰셀 1기', '뷰셀 2기', '뷰셀 3기'], url: 'https://script.google.com/macros/s/AKfycbzlzOVYceS1kyG52X06PpEaV11nMa2h5K1EUYGoK3kfRkTWF2cgympGUcDb-sgv_4kZ/exec' },
+  { name: '뷰셀', cohorts: ['뷰셀 1기', '뷰셀 2기', '뷰셀 3기', '뷰셀 4기'], url: 'https://script.google.com/macros/s/AKfycbzlzOVYceS1kyG52X06PpEaV11nMa2h5K1EUYGoK3kfRkTWF2cgympGUcDb-sgv_4kZ/exec' },
   { name: '미니쌤', cohorts: ['미니쌤 1기', '미니쌤 2기', '미니쌤 3기'], url: 'https://script.google.com/macros/s/AKfycbwh9XHGPkn6o7H2Vuk62eHqeyuIPI_IjeTwQHtLo6oAbKUU5UsK94ShE5vuQlDi1eQPvQ/exec' },
 ];

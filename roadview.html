@@ -35,7 +35,10 @@
         else map.relayout();
         document.getElementById('bMap').className = 'on'; document.getElementById('bRv').className = '';
       }
-      new kakao.maps.RoadviewClient().getNearestPanoId(pos, 60, function (panoId) {
+      // 큰 건물·단지는 도로에서 멀어 60m 안에 로드뷰가 없을 수 있다(11-04 가산 시험) → 60 → 150 → 300m 순서로 넓혀 찾는다
+      var rc = new kakao.maps.RoadviewClient();
+      function near(radii, cb) { rc.getNearestPanoId(pos, radii[0], function (id) { if (id || radii.length < 2) cb(id); else near(radii.slice(1), cb); }); }
+      near([60, 150, 300], function (panoId) {
         document.getElementById('tabs').style.display = 'flex';
         if (!panoId) { msg.textContent = ''; msg.style.display = 'none'; document.getElementById('bRv').style.display = 'none'; showMap(); return; }
         var rv = new kakao.maps.Roadview(rvEl); rv.setPanoId(panoId, pos);

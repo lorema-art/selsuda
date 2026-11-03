@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>로드뷰</title>
+<!-- 🏠 주소확인 로드뷰(11-04) — 셀수다 PC·모바일 앱이 iframe으로 띄운다. ?lat=&lng=&key=(카카오 JS키, 도메인 제한) -->
+<style>
+  html,body{margin:0;height:100%;background:#f3f3f3;font-family:sans-serif}
+  #rv,#map{width:100%;height:100%}
+  #msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#666;font-size:14px;text-align:center;padding:16px}
+  #tabs{position:absolute;top:8px;left:8px;z-index:5;display:flex;gap:4px}
+  #tabs button{border:0;border-radius:6px;padding:6px 10px;background:rgba(0,0,0,.6);color:#fff;font-size:13px;cursor:pointer}
+  #tabs button.on{background:#e8578b}
+</style>
+</head>
+<body>
+<div id="tabs" style="display:none"><button id="bRv" class="on">로드뷰</button><button id="bMap">지도</button></div>
+<div id="rv"></div><div id="map" style="display:none"></div>
+<div id="msg">불러오는 중…</div>
+<script>
+(function () {
+  var p = new URLSearchParams(location.search), lat = Number(p.get('lat')), lng = Number(p.get('lng')), key = p.get('key') || '';
+  var msg = document.getElementById('msg');
+  if (!lat || !lng || !/^[0-9a-f]{20,40}$/i.test(key)) { msg.textContent = '위치 정보가 없어요.'; return; }
+  var s = document.createElement('script');
+  s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?autoload=false&appkey=' + encodeURIComponent(key);
+  s.onerror = function () { msg.textContent = '카카오 지도를 불러오지 못했어요. (강사: 카카오 앱에 이 사이트 도메인 등록 필요)'; };
+  s.onload = function () {
+    kakao.maps.load(function () {
+      var pos = new kakao.maps.LatLng(lat, lng), rvEl = document.getElementById('rv'), mapEl = document.getElementById('map'), map = null;
+      function showMap() {
+        rvEl.style.display = 'none'; mapEl.style.display = 'block';
+        if (!map) { map = new kakao.maps.Map(mapEl, { center: pos, level: 3 }); new kakao.maps.Marker({ position: pos, map: map }); }
+        else map.relayout();
+        document.getElementById('bMap').className = 'on'; document.getElementById('bRv').className = '';
+      }
+      new kakao.maps.RoadviewClient().getNearestPanoId(pos, 60, function (panoId) {
+        document.getElementById('tabs').style.display = 'flex';
+        if (!panoId) { msg.textContent = ''; msg.style.display = 'none'; document.getElementById('bRv').style.display = 'none'; showMap(); return; }
+        var rv = new kakao.maps.Roadview(rvEl); rv.setPanoId(panoId, pos);
+        msg.style.display = 'none';
+        document.getElementById('bRv').onclick = function () { mapEl.style.display = 'none'; rvEl.style.display = 'block'; rv.relayout(); this.className = 'on'; document.getElementById('bMap').className = ''; };
+        document.getElementById('bMap').onclick = showMap;
+      });
+    });
+  };
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

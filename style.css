@@ -360,3 +360,28 @@ label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:p
 .swDate{margin-left:auto;font-size:11.5px;color:#9a8a86}
 .swProd{font-size:13.5px;color:#4a3a36;margin-top:6px}
 .swReason{font-size:12.5px;color:#6a5853;background:#fff;border-radius:8px;padding:7px 10px;margin-top:8px;line-height:1.6}
+
+/* 🏢 온라인 사무실 입장 전 주의사항(11-03) */
+.ofRules{background:#fffaf0;border:1px solid #f0d9a8;border-radius:12px;padding:11px 14px;margin:8px 0;font-size:12.5px;color:#4a3d22}
+.ofRules>b{display:block;font-size:13.5px;color:#7a5410;margin-bottom:5px}
+.ofRules ul{margin:0;padding-left:17px;line-height:1.7}
+.ofRules li.ofRuleWarn{color:#a3261b}
+
+/* 📋 찜 규칙 안내(11-03) */
+.dealRule{font-size:12.5px;background:#f7f9ff;border:1px solid #d6e0f5;border-radius:8px;padding:7px 10px;margin:8px 0 0}
+.dealRule summary{cursor:pointer;font-weight:700;color:#2c4a8a}
+.dealRule ul{margin:6px 0 2px;padding-left:17px;line-height:1.7;color:#33415c}
+.dealRule li.dealRuleSub{list-style:none;margin-left:-17px;color:#6a7590;font-size:12px}
+
+/* 🏠 주소지 확인(11-04) */
+.addrVerdict{border-radius:10px;padding:10px 12px;margin:10px 0;font-size:15px}
+.addrVerdict ul{margin:6px 0 0 18px;padding:0;font-size:13px}
+.addrVerdict.bad{background:#fde8e8;border:1px solid #f3b4b4}
+.addrVerdict.warn{background:#fff6dc;border:1px solid #f2d98a}
+.addrVerdict.good{background:#e6f4ea;border:1px solid #b5dcc0}
+.addrVerdict.none{background:#f1f1f1;border:1px solid #ddd}
+.addrSec{border-top:1px solid #eee;padding:8px 2px;font-size:14px;line-height:1.6}
+.addrSec ul{margin:4px 0 0 18px;padding:0}
+.addrTag{background:#e6f4ea;color:#1f6b3a;border-radius:6px;padding:1px 6px;font-size:12px}
+.addrErr{color:#c0392b;margin:4px 0}
+.addrRv{width:100%;height:280px;border:0;border-radius:10px;margin-top:6px;background:#f3f3f3}

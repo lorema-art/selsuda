@@ -160,7 +160,7 @@ function enterMain() {
 let TABCFG = { hidden: new Set(), locked: new Set(), msg: null };
 // 시트의 탭 이름 → 폰 앱의 탭
 const TAB_MAP = {
-  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin', '구매대행': 'buy', '공동구매': 'gb', '건의사항': 'sg', '가격추이': 'pt', '온라인사무실': 'office', '소싱주의': 'warn'
+  '1:1컨설팅': 'coach', '질문하기': 'ask', '오늘의할인': 'deals', '마진계산기': 'margin', '구매대행': 'buy', '공동구매': 'gb', '건의사항': 'sg', '가격추이': 'pt', '온라인사무실': 'office', '소싱주의': 'warn', '주소지확인': 'addr'
 };
 function tabKeyOf(tab) {                     // 폰 탭 → 시트 이름(되찾기)
   for (const k in TAB_MAP) if (TAB_MAP[k] === tab) return k;
@@ -176,9 +176,9 @@ async function applyTabConfig() {
     if (H.has(k)) TABCFG.hidden.add(TAB_MAP[k]);
     else if (L.has(k)) TABCFG.locked.add(TAB_MAP[k]);
   });
-  // 재고·배송은 두 탭이 하나로 합쳐져 있다 — 둘 다 숨김이거나 '택배관리' 지정일 때만 숨긴다
-  if (H.has('택배관리') || (H.has('재고관리') && H.has('배송요청'))) TABCFG.hidden.add('ship');
-  else if (L.has('택배관리') || (L.has('재고관리') && L.has('배송요청'))) TABCFG.locked.add('ship');
+  // 11-03 메뉴 분리: 재고(inv) · 배송(ship) 따로. '택배관리'(옛 키) = 둘 다
+  if (H.has('택배관리') || H.has('재고관리')) TABCFG.hidden.add('inv'); else if (L.has('택배관리') || L.has('재고관리')) TABCFG.locked.add('inv');
+  if (H.has('택배관리') || H.has('배송요청')) TABCFG.hidden.add('ship'); else if (L.has('택배관리') || L.has('배송요청')) TABCFG.locked.add('ship');
   document.querySelectorAll('.tab').forEach(b => {
     b.style.display = TABCFG.hidden.has(b.dataset.tab) ? 'none' : '';
   });
@@ -204,7 +204,7 @@ function go(tab) {
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: viewShip, buy: viewBuy, gb: viewGroupBuy, sg: viewSuggest, pt: viewPriceTrend, office: viewOffice, warn: viewSWarn, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: () => { DL.tab = 'ship'; viewShip(); }, inv: () => { DL.tab = 'inv'; viewShip(); }, buy: viewBuy, gb: viewGroupBuy, sg: viewSuggest, pt: viewPriceTrend, office: viewOffice, warn: viewSWarn, addr: viewAddr, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -225,10 +225,13 @@ async function viewHome() {
       <button onclick="go('office')"><i>🏢</i>온라인 사무실</button>
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
-      <button onclick="go('ship')"><i>📦</i>재고·배송</button>
+      <button onclick="go('inv')"><i>📦</i>재고관리</button>
+      <button onclick="go('ship')"><i>🚚</i>배송요청</button>
+      <button onclick="mpInquiry()"><i>📮</i>물류 문의</button>
       <button onclick="go('buy')"><i>🛒</i>구매대행</button>
       <button onclick="go('gb')"><i>🤝</i>공동구매</button>
       <button onclick="go('pt')"><i>📈</i>가격추이</button>
+      <button onclick="go('addr')"><i>🏠</i>주소지 확인</button>
       <button onclick="go('warn')"><i>🚫</i>소싱주의</button>
       <button onclick="go('sg')"><i>💡</i>건의사항</button>
       <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
@@ -278,6 +281,13 @@ function officeCardM(it, i) {
     ${it.url ? `<button class="btn" style="margin-top:12px" onclick="officeEnterM(${i})">🚪 온라인 사무실 입장하기</button>` : ''}
   </div>`;
 }
+// 입장 전 주의사항(11-03 루크) — 줌 화면에 띄우는 안내와 같은 내용, PC와 동일
+const OFFICE_RULES = `<div class="ofRules"><b>📌 입장 전 꼭 읽어주세요</b><ul>
+    <li>질문은 <b>프로그램 → 질문하기 → 온라인 사무실</b> 댓글로 남겨주세요 (순서대로 확인해서 안내드려요)</li>
+    <li>친목보다 <b>함께 일하며 배우고 나누는 공간</b>이에요. 예의는 필수입니다</li>
+    <li class="ofRuleWarn">감정싸움·분쟁이 생기면 누가 옳고 그른지와 관계없이 <b>두 분 모두 제재</b>합니다</li>
+    <li>🙏 누군가 도움을 주었다면 꼭 짧게라도 <b>감사 인사</b>를 남겨주세요</li>
+  </ul></div>`;
 const OFFICE_TIP = `<p class="muted" style="font-size:12px;line-height:1.7">💡 줌 앱이 없으면 처음 한 번 설치 화면이 나와요. 비밀번호를 물어보면 [복사]해 둔 걸 붙여넣으세요.</p>`;
 async function viewOffice() {
   loading();
@@ -286,7 +296,7 @@ async function viewOffice() {
   if (!d) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.<br><br><button class="btn mini" onclick="viewOffice()">다시 시도</button></div>`; return; }
   OFFICE = d.items || [];
   let h = `<div class="sec">🏢 온라인 사무실</div><p class="muted" style="font-size:13px;margin:0 2px 8px">강사님이 연 줌(Zoom) 회의실이에요. <b>입장하기</b>를 누르면 줌이 열려요.</p>`;
-  h += OFFICE.length ? OFFICE.map(officeCardM).join('') + OFFICE_TIP
+  h += OFFICE.length ? OFFICE_RULES + OFFICE.map(officeCardM).join('') + OFFICE_TIP
     : `<div class="empty">지금은 열린 온라인 사무실이 없어요.<br>사무실이 열리면 앱을 켤 때 알려드릴게요.</div>`;
   $('pane').innerHTML = h;
 }
@@ -315,7 +325,7 @@ async function checkOfficeM() {
   OFFICE = open;
   sheet(`<h3>🏢 온라인 사무실이 열렸어요!</h3>
     <p class="muted" style="font-size:13px;margin:4px 0 6px">강사님과 동기들이 함께 일하고 있어요. 들어와서 같이 작업해요 😊</p>
-    ${open.map(officeCardM).join('')}${OFFICE_TIP}
+    ${OFFICE_RULES}${open.map(officeCardM).join('')}${OFFICE_TIP}
     <button class="btn ghost" onclick="closeSheet(true)" style="margin-top:4px">나중에 할게요</button>`);
 }
 let _officeTimerM = null;
@@ -363,7 +373,7 @@ function mMbHtml(mb) {
     <div style="font-size:13px;margin-top:6px;line-height:1.65">앞으로 상품을 <b>주문할 때, 배송지 주소 맨 뒤에 '${esc(mb)}'</b>를 꼭 적어주세요.<br>예) 경기도 구리시 갈매순환로 154, 현대테라타워 제4층 제에이408호 힐링디어스(주) <b>${esc(mb)}</b></div></div>` : '';
 }
 async function homeMbBanner() {
-  if (!BRAIN.deliveryUrl || TABCFG.hidden.has('ship')) return;
+  if (!BRAIN.deliveryUrl || (TABCFG.hidden.has('ship') && TABCFG.hidden.has('inv'))) return;
   const k = 'mbCode_' + ((session && session.userId) || '');
   const put = (mb) => { const b = $('mMbBanner'); if (b && cur === 'home') b.innerHTML = mMbHtml(mb); };
   const saved = store.get(k, ''); if (saved) { put(saved); mMbPopup(saved); }
@@ -384,8 +394,9 @@ async function homeGbBanner() {
   if (!BRAIN.deliveryUrl || TABCFG.hidden.has('gb') || TABCFG.locked.has('gb')) return;
   let d = null;
   try { d = await dlApi('getGroupBuys'); } catch (_) { return; }
-  const box = $('mGbBanner'); if (!box || cur !== 'home') return;
   const list = ((d && d.ok && d.items) || []).filter(x => x.open && !x.joined && (x.left == null || x.left > 0));
+  mGbPopup(list);
+  const box = $('mGbBanner'); if (!box || cur !== 'home') return;
   if (!list.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="sec">🤝 진행 중인 공동구매</div>` + list.slice(0, 3).map(x => `
     <div class="card gbBanner" onclick="go('gb')">
@@ -394,6 +405,26 @@ async function homeGbBanner() {
         ${x.left != null ? `<b>${x.left}자리 남음</b>` : '모집 중'}${x.until ? ` · ⏰ ${esc(x.until)}까지` : ''}</div>
       <div class="m" style="margin-top:4px;color:#8a3a5c;font-weight:700">👉 눌러서 보기 (제품은 신청 후 공개)</div>
     </div>`).join('');
+}
+// 🤝 새 공동구매 메인 팝업(11-03 루크) — PC와 같은 규칙: 공구마다 한 번, 다른 창이 떠 있으면 잠시 뒤
+function mGbPopup(list, tries) {
+  const k = 'gbPopSeen_' + ((session && session.userId) || '');
+  const seen = store.get(k, []) || [];
+  const fresh = list.filter(x => !seen.includes(String(x.id)));
+  if (!fresh.length) return;
+  if (!$('sheet').classList.contains('hidden')) { if ((tries || 0) < 8) setTimeout(() => mGbPopup(list, (tries || 0) + 1), 5000); return; }
+  store.set(k, seen.concat(fresh.map(x => String(x.id))).slice(-200));
+  const won = (n) => Math.round(Number(n) || 0).toLocaleString() + '원';
+  const c = (v) => v < 0 ? '#c0392b' : '#1f6b3a';
+  sheet(`<h3>🤝 새 공동구매가 열렸어요!</h3>
+    <p class="muted" style="font-size:12.5px;margin:2px 0 8px">선착순이에요. 제품명은 신청한 분께만 공개돼요.</p>
+    ${fresh.slice(0, 3).map(x => { const sm = x.shipMargin != null ? x.shipMargin : x.unitMargin; return `<div class="card" style="font-size:13px;line-height:1.6">
+      <b>${esc(x.category || '새 공동구매')}</b>${x.left != null ? ` <span class="purBadge ing">${x.left}자리 남음</span>` : ''}<br>
+      개당 <b>${won(x.price)}</b> × ${x.per}개 = <b>${won(x.need)}</b>
+      ${x.sell > 0 ? `<br>예상 마진 1건 발송 <b style="color:${c(sm)}">${won(sm)}</b> · 총 <b style="color:${c(x.totalMargin)}">${won(x.totalMargin)}</b>` : ''}
+      ${x.until ? `<br><span class="muted">⏰ ${esc(x.until)}까지</span>` : ''}</div>`; }).join('')}
+    <div class="row"><button class="btn" onclick="closeSheet(true);go('gb')">공동구매 보러 가기</button>
+      <button class="btn ghost" onclick="closeSheet(true)">닫기</button></div>`);
 }
 // 📒 입출금 내역(10-22) — PC와 같은 내용, 입금/출금 따로 보기
 let MBH = { d: null, tab: 'all' };
@@ -764,7 +795,7 @@ const fmtDT = (s) => String(s || '').replace('T', ' ').slice(0, 16);
 // 빨리 열기(10-15): 마지막으로 본 내용을 먼저 보여주고 뒤에서 최신으로 바꾼다(PC와 같은 방식).
 //  입력 칸에 적는 중이면 덮어쓰지 않고 [새로 보기]만 띄운다.
 let _mDlDirty = false;
-document.addEventListener('input', (e) => { try { if (cur === 'ship' && e.target.closest && e.target.closest('#pane')) _mDlDirty = true; } catch (_) {} }, true);
+document.addEventListener('input', (e) => { try { if (isDlTab() && e.target.closest && e.target.closest('#pane')) _mDlDirty = true; } catch (_) {} }, true);
 const mDlCacheKey = () => 'dlCache_ship_' + ((session && session.userId) || '');
 function mDlApply(inv, ship, bal) {
   DL.inv = dlSortByName((inv && inv.items) || []);
@@ -792,7 +823,7 @@ async function viewShip() {
       dlApi('getBalance').catch(() => null)
     ]);
     if (cached) {
-      if (cur !== 'ship') return;
+      if (!isDlTab()) return;
       if (!inv || !inv.ok || !ship || !ship.ok) { mDlBar('⚠ 서버가 바빠 최신 정보를 못 불러왔어요. 잠시 후 다시 열어주세요.'); return; }
       store.set(mDlCacheKey(), { inv, ship, bal });
       if (_mDlDirty) { mDlBar('🆕 새 정보가 있어요 <button class="btn mini" onclick="mDlFresh()">새로 보기</button>'); window._mDlNext = { inv, ship, bal }; return; }
@@ -807,7 +838,7 @@ async function viewShip() {
     DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
     DL.bal = bal && bal.ok ? bal : null;
   } catch (_) { $('pane').innerHTML = `<div class="empty">연결에 실패했어요.</div>`; return; }
-  if (cur !== 'ship') return;   // 기다리는 사이 다른 탭으로 옮겼으면 덮어쓰지 않음
+  if (!isDlTab()) return;   // 기다리는 사이 다른 탭으로 옮겼으면 덮어쓰지 않음
   renderShip();
 }
 function renderShip() {
@@ -821,15 +852,13 @@ function renderShip() {
   }
   if (DL.notice) h += `<div class="noticeBox" style="margin-bottom:12px">${nl2br(DL.notice)}</div>`;
   h += `<button class="btn ghost" style="width:100%;margin:0 0 12px" onclick="mpInquiry()">💬 물류담당자에게 문의</button>`;
-  h += `<div class="row" style="margin:0 0 12px">
-      <button class="btn ${DL.tab === 'inv' ? '' : 'ghost'}" onclick="dlTab('inv')">📦 내 재고</button>
-      <button class="btn ${DL.tab === 'ship' ? '' : 'ghost'}" onclick="dlTab('ship')">🚚 배송요청</button>
-    </div>`;
+  h = `<div class="sec" style="margin-top:2px">${DL.tab === 'inv' ? '📦 재고관리' : '🚚 배송요청'}</div>` + h;   // 11-03 메뉴 분리: 토글 대신 제목
   h += DL.tab === 'inv' ? paneInv() : paneShip();
   $('pane').innerHTML = h;
   if (DL.tab === 'ship') { try { dlInfo(); } catch (_) {} }
 }
-window.dlTab = (t) => { DL.tab = t; renderShip(); };
+window.dlTab = (t) => { go(t === 'inv' ? 'inv' : 'ship'); };
+function isDlTab() { return cur === 'ship' || cur === 'inv'; }   // 재고·배송은 같은 화면 코드(DL)를 같이 쓴다
 window.mDlFresh = () => { const n = window._mDlNext; if (!n) return; _mDlDirty = false; mDlApply(n.inv, n.ship, n.bal); renderShip(); };
 
 // ── 현금영수증용 사업자등록번호 (구매대행·공동구매 공용, 한 번 적으면 기억) — PC·서버와 같은 검증 규칙 ──
@@ -1048,7 +1077,7 @@ function renderGroupBuy() {
   if (!items.length) h += `<div class="empty">지금 진행 중인 공동구매가 없어요.</div>`;
   h += items.map(x => {
     const won = (n) => Math.round(Number(n) || 0).toLocaleString() + '원';
-    const col = x.unitMargin < 0 ? '#c0392b' : '#1f6b3a';
+    const sm = x.shipMargin != null ? x.shipMargin : x.unitMargin, col = sm < 0 ? '#c0392b' : '#1f6b3a', colT = x.totalMargin < 0 ? '#c0392b' : '#1f6b3a';
     const row = (a, v, st) => `<div style="display:flex;justify-content:space-between;padding:2px 0;${st || ''}"><span>${a}</span><span>${v}</span></div>`;
     const badge = x.joined ? '<span class="purBadge done">✅ 참여 완료</span>' : (x.open ? '<span class="purBadge ing">모집중</span>' : `<span class="purBadge cancel">${esc(x.closedWhy || '마감')}</span>`);
     let c = `<div class="item gbCard ${!x.open && !x.joined ? 'closed' : ''}"><div class="h"><b>${esc(x.category || '카테고리 미정')}</b>${badge}</div>
@@ -1056,8 +1085,8 @@ function renderGroupBuy() {
         ${row('개당 공구가', `<b>${won(x.price)}</b>`)}${row('1인 수량', x.per + '개')}
         ${x.fee > 0 ? row(`상품 금액 (${x.per}개)`, won(x.goods)) + row(`공동구매 수수료 ${gbFeePct(x)}%`, won(x.fee)) : ''}${row('필요 금액', `<b>${won(x.need)}</b>`)}
         ${row('예상 판매가 (개당)', won(x.sell))}
-        ${row(`예상 마진 (개당 · 네이버 ${x.npct}%${x.fee > 0 ? ` · 공구 수수료 ${gbFeePct(x)}%` : ''})`, won(x.unitMargin), `color:${col};border-top:1px solid #eee;margin-top:4px;padding-top:5px`)}
-        ${row(`<b>총 예상 마진 (${x.per}개)</b>`, `<b>${won(x.totalMargin)}</b>`, `color:${col}`)}
+        ${row(`예상 마진 (1건 발송 · ${x.set || 1}개 구성 · 네이버 ${x.npct}%${x.fee > 0 ? ` · 공구 수수료 ${gbFeePct(x)}%` : ''}${x.shipFee ? ` · 택배비 ${won(x.shipFee)}` : ''})`, won(sm), `color:${col};border-top:1px solid #eee;margin-top:4px;padding-top:5px`)}
+        ${row(`<b>총 예상 마진 (${x.per}개${x.ships ? ` · ${x.ships}건 발송` : ''})</b>`, `<b>${won(x.totalMargin)}</b>`, `color:${colT}`)}
       </div>
       <div class="m" style="margin-top:6px">👥 ${x.seats > 0 ? `${x.used}/${x.seats}명${x.left > 0 ? ` · ${x.left}자리 남음` : ''}` : `${x.used}명 신청`}${x.until ? ` · ⏰ ${esc(x.until)}까지` : ''}</div>`;
     if (x.joined) {
@@ -2382,6 +2411,26 @@ function openDealLocked(it) {
 // ── 🙋 찜하기 · ⭐ 초보 추천 (PC와 같은 규칙) ──
 //  상품마다 선착순 3명(두뇌가 셈) · 3명이 차면 찜한 사람에게만 보인다(두뇌가 남의 목록에서 뺀다).
 function dealClaimMax() { return Number(DEALS.claimMax) || 3; }
+// 📋 찜 규칙 안내(11-03 루크) — 숫자는 두뇌 '딜찜설정' 탭 값(claimRule), 없으면 기본값 — PC와 같은 문구
+// 찜 유지 기간 문구 — 기간 1이면 '오늘 밤 12시까지'
+function dealHoldText(q) { const dd = (q && q.days) || 1; return dd <= 1 ? '오늘 밤 12시까지' : dd + '일 동안'; }
+function dealRuleHtml(d) {
+  const r = (d && d.claimRule) || {}, q = (d && d.myQuota) || {};
+  const n = (v, x) => (v === undefined || v === null || v === '') ? x : Number(v);
+  const per = Number(d && d.claimMax) || 3, held = n(r.held, n(q.heldMax, 3)), daily = n(r.daily, n(q.todayMax, 3));
+  const nb = n(r.newbie, n(q.newbieMax, 2)), days = n(r.days, n(q.days, 1));
+  const nbM = n(r.nbMargin, 3000), nbS = n(r.nbMalls, 10);
+  return `<details class="dealRule"><summary>📋 찜 규칙 안내 (눌러서 보기)</summary><ul>
+    <li><b>상품당 ${per}명</b> — 한 상품은 선착순 ${per}명까지 찜할 수 있어요. 다 차면 찜한 분 화면에만 보여요.</li>
+    ${days <= 1
+      ? `<li><b>매일 ${daily}개</b> — 하루에 ${daily}개까지 찜할 수 있고, <b>밤 12시에 모두 풀려서</b> 다음 날 다시 ${daily}개를 찜할 수 있어요. (할인 상품이 매일 바뀌니까요) 찜했다가 풀어도 1개로 세요.</li>`
+      : `<li><b>한 번에 ${held}개</b> — 한 사람이 동시에 갖고 있을 수 있는 찜은 최대 ${held}개예요.</li>
+    <li><b>하루 ${daily}개</b> — 하루(자정 기준)에 새로 찜할 수 있는 개수예요. 찜했다가 풀어도 1개로 세요.</li>
+    <li><b>찜 기간 ${days}일</b> — ${days}일이 지나면 저절로 풀려서 다른 분이 찜할 수 있어요.</li>`}
+    <li><b>⭐ 초보 추천은 ${nb}개까지</b> — 찜 중 초보 추천 상품은 ${nb}개까지만 가질 수 있어요.</li>
+    <li class="dealRuleSub">⭐ 초보 추천 = 1건 마진 ${nbM.toLocaleString()}원 이상 + 네이버 판매처 ${nbS}곳 이상인 상품</li>
+  </ul></details>`;
+}
 //  초보 추천·찜 한도는 두뇌가 정한다(사람마다 적립 설정이 달라 앱 계산이면 한도 판정이 어긋난다)
 function dealNewbie(it) { return !!(it && it.newbie); }
 function dealQuotaText() {
@@ -2455,8 +2504,8 @@ window.dealClaim = async function (code) {
   if (b) { b.disabled = false; b.textContent = '🙋 찜하기'; }
 };
 window.dealUnclaim = async function (market, code) {
-  const days = (DEALS.myQuota || {}).days || 7;
-  if (!confirm(`찜을 풀까요? 자리가 다른 분께 넘어가요.\n\n· 오늘 새 찜 개수는 돌아오지 않아요\n· 이 상품은 ${days}일 동안 다시 찜할 수 없어요`)) return;
+  const days = (DEALS.myQuota || {}).days || 1;
+  if (!confirm(`찜을 풀까요? 자리가 다른 분께 넘어가요.\n\n· 오늘 새 찜 개수는 돌아오지 않아요\n· 이 상품은 ${days <= 1 ? '오늘은' : days + '일 동안'} 다시 찜할 수 없어요`)) return;
   try {
     const d = await api('dealUnclaim', { market, goodscode: code });
     if (d && d.quota) DEALS.myQuota = d.quota;
@@ -2549,7 +2598,7 @@ function renderDeals() {
   h += dealPtBar();
   const nNew = plain.filter(dealNewbie).length, myN = (DEALS.myClaims || []).length;
   const myAlert = (DEALS.myClaims || []).filter(c => dealClaimAlert(c)).length;
-  h += `<div class="dealSteps">⭐ 처음이면 <b>초보 추천</b>부터 — 마진 남는 상품은 <b>🔒 찜한 분(선착순 ${dealClaimMax()}명)께만 상품명·링크가 열려요.</b> 누르면 <b>찜하기 → 확인 → 등록</b> 순서로 안내해요.</div>`;
+  h += `<div class="dealSteps">⭐ 처음이면 <b>초보 추천</b>부터 — 마진 남는 상품은 <b>🔒 찜한 분(선착순 ${dealClaimMax()}명)께만 상품명·링크가 열려요.</b> 누르면 <b>찜하기 → 확인 → 등록</b> 순서로 안내해요.</div>` + dealRuleHtml(DEALS);
   h += `<div class="chips" style="margin:10px 0">${chip('all', `전체 ${plain.length}`)}${nNew ? chip('newbie', `⭐ 초보 추천 ${nNew}`) : ''}${chip('mine', `🙋 내 찜 ${DEALS.myQuota ? `${DEALS.myQuota.held}/${DEALS.myQuota.heldMax}` : myN}${myAlert ? ` ⚠${myAlert}` : ''}`)}${chip('hot', `🔥 핫딜 ${nHot}`)}${nLow ? chip('low', `📉 최저가 ${nLow}`) : ''}${nWin ? chip('win', `💰 마진 ${nWin}`) : ''}${bundles.length ? chip('bundle', `📦 모음전 ${bundles.length}`) : ''}</div>`;
   // 카테고리 필터 — 있는 것만(개수와 함께)
   const CAT_ORDER = ['뷰티', '건강식품', '식품', '생활', '기타'];
@@ -2571,7 +2620,7 @@ function renderDeals() {
   if (DEALS.filter === 'mine') {
     const q = DEALS.myQuota;
     h += (q ? `<div class="dealQuota">${dealQuotaText()}</div>` : '')
-      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${q ? q.days : 7}일 동안 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 한 번에 ${q ? q.heldMax : 5}개 · 하루 ${q ? q.todayMax : 3}개 · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>` + dealMyClaimsHtml();
+      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${dealHoldText(q)} 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 ${(q ? q.days : 1) <= 1 ? `매일 ${q ? q.todayMax : 3}개` : `한 번에 ${q ? q.heldMax : 3}개 · 하루 ${q ? q.todayMax : 3}개`} · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>` + dealMyClaimsHtml();
     $('pane').innerHTML = h; refreshPushBtn(); return;
   }
   h += list.slice(0, 100).map(it => `
@@ -2652,3 +2701,74 @@ async function checkNegativeBalance() {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();
+
+// ── 🏠 고객 주소지 확인 (11-04 루크) — PC와 같은 규칙. AI 확인은 택배비 잔액 차감(부족하면 두뇌가 막음) ──
+const ROADVIEW_URL_M = 'https://lorema-art.github.io/selsuda/roadview.html';
+let ADDR_LAST = null;
+function viewAddr() {
+  if (!BRAIN.deliveryUrl) { $('pane').innerHTML = `<div class="empty">아직 연결되지 않았어요.</div>`; return; }
+  $('pane').innerHTML = `<div class="sec">🏠 고객 주소지 확인</div>
+    <p class="muted" style="font-size:13px;margin:0 2px 8px">위탁으로 보내기 전에 받는 주소가 <b>사무실·매장(경쟁사)</b>인지 확인해요. 자택 주소가 아니면 의심하세요.</p>
+    <input type="text" id="addrQ" placeholder="예) 서울 금천구 가산디지털1로 123 1205호" autocomplete="off" onkeydown="if(event.key==='Enter')addrRunM(false)">
+    <button class="btn" style="margin-top:8px" onclick="addrRunM(false)">확인</button>
+    <div id="addrOut"></div>`;
+}
+window.addrRunM = async function (ai) {
+  const q = ($('addrQ') && $('addrQ').value || '').trim(), out = $('addrOut'); if (!out) return;
+  if (q.length < 5) { out.innerHTML = '<p class="muted">주소를 조금 더 자세히 적어주세요.</p>'; return; }
+  if (ai && !confirm('🤖 AI로 인터넷에서 이 주소의 사업자 정보를 찾아볼게요.\n\n실제 든 비용(보통 100~300원)이 택배비 잔액에서 빠져요.\n찾지 못해도 비용은 나가요. (오류로 실패하면 안 빠져요)\n\n진행할까요?')) return;
+  out.innerHTML = `<p class="muted">${ai ? '🤖 AI가 인터넷에서 찾는 중… (20초~1분)' : '확인 중…'}</p>`;
+  let d = null;
+  try {   // AI는 1분 넘게 걸릴 수 있어 기본 60초 제한 대신 3분까지 기다린다(중간에 끊으면 비용만 빠진 것처럼 보임)
+    if (ai) {
+      const ctrl = new AbortController(), tm = setTimeout(() => ctrl.abort(), 180000);
+      try {
+        const res = await fetch(BRAIN.deliveryUrl, { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'addrCheck', userId: session ? session.userId : '', nickname: session ? session.nickname : '', cohort: session ? session.cohort : '', name: myName(), address: q, ai: true }) });
+        d = await res.json();
+      } finally { clearTimeout(tm); }
+    } else d = await dlApi('addrCheck', { address: q, ai: false });
+  } catch (e) { out.innerHTML = `<p class="muted">${esc(e.message || '연결 오류')}</p>`; return; }
+  if (cur !== 'addr') return;
+  if (!d || !d.ok) { out.innerHTML = `<p class="muted">${esc((d && d.error) || '확인하지 못했어요.')}</p>`; return; }
+  if (!ai && ADDR_LAST && ADDR_LAST.q === q && ADDR_LAST.d.ai) d.ai = ADDR_LAST.d.ai;
+  ADDR_LAST = { q, d };
+  out.innerHTML = addrHtmlM(d);
+  api('logAddrCheck', addrLogPayloadM(q, d, ai)).catch(() => {});   // 메인시트 '주소확인기록'(강사 확인용)
+};
+// 확인 결과를 메인시트 '주소확인기록'에 남긴다(강사가 직접 확인용, 11-04). 실패해도 화면엔 영향 없음.
+function addrLogPayloadM(q, d, ai) {
+  const v = d.verdict || {}, k = d.kakao || {}, j = d.juso || {};
+  return { address: q, road: j.road || k.road || '', building: j.bdNm || k.bname || '', verdict: v.label || '', why: (v.why || []).join(' / '),
+    places: (k.places || []).map(p => p.name + (p.cat ? '(' + p.cat + ')' : '')).join(', '),
+    ai: ai && d.ai ? [d.ai.summary || ''].concat((d.ai.found || []).map(f => '· ' + [f.name, f.what, f.same, f.where].filter(Boolean).join(' '))).join('\n') : (ai && d.aiError ? '실패: ' + d.aiError : ''),
+    aiCost: ai ? (d.aiCharged || 0) : 0 };
+}
+function addrHtmlM(d) {
+  const v = d.verdict || {}, k = d.kakao || {}, j = d.juso || {};
+  const cls = v.level === 2 ? 'bad' : v.level === 1 ? 'warn' : v.level === 0 ? 'good' : 'none';
+  const icon = v.level === 2 ? '🔴' : v.level === 1 ? '🟡' : v.level === 0 ? '🟢' : '⚪';
+  const tip = v.level === 2 ? '자택이 아닐 가능성이 높아요. 위탁 발송은 신중히!' : v.level === 1 ? '로드뷰로 건물을 꼭 확인하세요.' : v.level === 0 ? '자택으로 보여요. (집에서 사업하는 경우는 걸러지지 않아요)' : '';
+  let h = `<div class="addrVerdict ${cls}"><b>${icon} ${esc(v.label || '')}</b>${tip ? `<br><span style="font-size:13px">${tip}</span>` : ''}
+    <ul>${(v.why || []).map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>`;
+  const road = j.road || k.road || '';
+  h += `<div class="addrSec"><b>① 주소·건물</b><div>${esc(road || '찾지 못함')}${j.bdNm ? ` · 건물명 <b>${esc(j.bdNm)}</b>` : ''}${j.apt ? ' · <span class="addrTag">공동주택</span>' : ''}</div>`;
+  if (k.places && k.places.length) h += `<div>이 주소에 등록된 상호:<ul>${k.places.map(p => `<li><b>${esc(p.name)}</b> <span class="muted">${esc(p.cat)}${p.phone ? ' · ' + esc(p.phone) : ''}</span></li>`).join('')}</ul></div>`;
+  else if (!k.error && !k.none) h += `<div class="muted">카카오 지도에 이 주소로 등록된 상호가 없어요.</div>`;
+  if (j.error || k.error) h += `<div class="muted">⚠ ${esc([j.error, k.error].filter(Boolean).join(' / '))}</div>`;
+  h += `</div><div class="addrSec"><b>② AI 확인</b>`;
+  if (d.ai) {
+    h += `<div>${esc(d.ai.summary || '')}</div>`;
+    if (d.ai.found && d.ai.found.length) h += `<ul>${d.ai.found.map(f => `<li><b>${esc(f.name || '')}</b> ${esc(f.what || '')} <span class="muted">${esc([f.same, f.where].filter(Boolean).join(' · '))}</span></li>`).join('')}</ul>`;
+    if (d.aiCharged) h += `<div class="muted">AI 비용 ${Number(d.aiCharged).toLocaleString()}원이 택배비 잔액에서 빠졌어요. (남은 잔액 ${Number(d.available || 0).toLocaleString()}원)</div>`;
+  } else {
+    if (d.aiError) h += `<div class="addrErr">${esc(d.aiError)}</div>`;
+    const can = d.aiReady && Number(d.available) >= Number(d.aiMin || 500);
+    h += can ? `<button class="btn ghost" style="margin-top:6px" onclick="addrRunM(true)">🤖 AI로 한 번 더 확인 (보통 100~300원 · 택배비 잔액 차감)</button>`
+      : `<div class="muted">${d.aiReady ? `택배비 잔액이 ${Number(d.aiMin || 500).toLocaleString()}원 이상 있어야 AI 확인을 할 수 있어요. (현재 ${Number(d.available || 0).toLocaleString()}원)` : 'AI 확인은 아직 준비 중이에요.'}</div>`;
+  }
+  h += `</div><div class="addrSec"><b>③ 로드뷰</b>`;
+  if (k.x && k.y && d.jsKey) h += `<iframe class="addrRv" src="${ROADVIEW_URL_M}?lat=${encodeURIComponent(k.y)}&lng=${encodeURIComponent(k.x)}&key=${encodeURIComponent(d.jsKey)}" loading="lazy"></iframe>`;
+  else h += `<div class="muted">${d.jsKey ? '위치를 찾지 못해 로드뷰를 띄울 수 없어요.' : '로드뷰는 아직 준비 중이에요.'}</div>`;
+  return h + `</div><p class="muted" style="font-size:12px">※ 결과는 참고용 신호예요. 확인한 주소와 결과는 강사님이 볼 수 있게 기록돼요.</p>`;
+}

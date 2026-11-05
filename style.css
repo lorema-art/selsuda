@@ -385,3 +385,28 @@ label.btn{display:inline-flex;align-items:center;justify-content:center;cursor:p
 .addrTag{background:#e6f4ea;color:#1f6b3a;border-radius:6px;padding:1px 6px;font-size:12px}
 .addrErr{color:#c0392b;margin:4px 0}
 .addrRv{width:100%;height:280px;border:0;border-radius:10px;margin-top:6px;background:#f3f3f3}
+
+/* ✏️ 홈 메뉴 편집(11-04) */
+.navEditList{max-height:55vh;overflow:auto;border:1px solid #eee;border-radius:10px;padding:4px 10px;margin:8px 0}
+.navEditRow{display:flex;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid #f4f4f4;font-size:14px}
+.navEditRow:last-child{border-bottom:0}
+.navEditRow i{font-style:normal;margin-right:4px}
+.navEditLink{display:block;margin:2px auto 6px;background:none;border:0;color:#8a3a5c;font-size:12.5px;text-decoration:underline;cursor:pointer}
+
+/* ❓ 자주 묻는 질문(11-04) */
+.faqCat{font-size:12.5px;font-weight:700;color:#8a3a5c;margin:14px 2px 6px}
+.faqItem{border:1px solid #eee;border-radius:10px;margin:6px 0;background:#fff}
+.faqItem summary{cursor:pointer;padding:11px 12px;font-weight:600;font-size:14px}
+.faqItem[open] summary{border-bottom:1px solid #f2f2f2}
+.faqA{padding:10px 13px 12px;font-size:14px;line-height:1.7;color:#333}
+
+/* 📜 내 찜 기록(11-05) */
+.dhWin{display:flex;align-items:center;gap:6px;font-size:13px;margin:6px 2px 4px}
+.dhRow{padding:10px 12px}
+.dhTop{display:flex;gap:6px;align-items:center;font-size:11.5px;flex-wrap:wrap}
+.dhSt{font-weight:700;border-radius:6px;padding:1px 6px;font-size:11px}
+.dhSt.stOn{background:#e7f6ec;color:#1d7a3d}.dhSt.stEnd{background:#f1f1f1;color:#666}.dhSt.stUndo{background:#fdecec;color:#b33}
+.dhNb{font-size:11px;color:#a66b00}
+.dhNm{font-weight:600;font-size:14px;margin:5px 0 3px}
+.dhMt{font-size:12.5px;color:#444}.dhMt .pos{color:#1d7a3d}.dhMt .neg{color:#b33}
+.dhBtns{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}

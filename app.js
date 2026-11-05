@@ -204,7 +204,7 @@ function go(tab) {
   cur = tab;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $('pane').scrollTop = 0;
-  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: () => { DL.tab = 'ship'; viewShip(); }, inv: () => { DL.tab = 'inv'; viewShip(); }, buy: viewBuy, gb: viewGroupBuy, sg: viewSuggest, pt: viewPriceTrend, office: viewOffice, warn: viewSWarn, addr: viewAddr, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
+  ({ home: viewHome, coach: viewCoach, ask: viewAsk, ship: () => { DL.tab = 'ship'; viewShip(); }, inv: () => { DL.tab = 'inv'; viewShip(); }, buy: viewBuy, gb: viewGroupBuy, sg: viewSuggest, pt: viewPriceTrend, office: viewOffice, warn: viewSWarn, addr: viewAddr, faq: viewFaq, margin: viewMargin, deals: viewDeals }[tab] || viewHome)();
 }
 window.go = go;
 const loading = (t) => {
@@ -225,6 +225,7 @@ async function viewHome() {
       <button onclick="go('office')"><i>🏢</i>온라인 사무실</button>
       <button onclick="go('coach')"><i>💎</i>컨설팅 신청</button>
       <button onclick="go('ask')"><i>💬</i>질문하기</button>
+      <button onclick="go('faq')" data-faq="1"><i>❓</i>자주 묻는 질문</button>
       <button onclick="go('inv')"><i>📦</i>재고관리</button>
       <button onclick="go('ship')"><i>🚚</i>배송요청</button>
       <button onclick="mpInquiry()"><i>📮</i>물류 문의</button>
@@ -237,7 +238,7 @@ async function viewHome() {
       <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
       <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
-    </div><div id="mMbBanner"></div><div id="mGbBanner"></div>`;
+    </div><button class="navEditLink" onclick="mNavEdit()">✏️ 메뉴 편집</button><div id="mMbBanner"></div><div id="mGbBanner"></div>`;
   if (notice.length) {
     h += `<div class="sec">📢 공지사항</div>`;
     h += notice.map(n => `<div class="card"><b>${esc(n.title || '')}</b><div class="noticeBox" style="margin-top:8px">${nl2br(n.body || '')}</div></div>`).join('');
@@ -259,6 +260,9 @@ async function viewHome() {
       여기서는 컨설팅 신청, 질문, 재고·배송요청을 편하게 하실 수 있어요.
     </div>`;
   $('pane').innerHTML = h;
+  document.querySelectorAll('.quick button').forEach(b => { b.dataset.q = quickLabel(b); });   // ✏️ 버튼 이름 = 숨김 키
+  applyQuickHideM();
+  loadFaqM();
   homeGbBanner();   // 🤝 자리 남은 공동구매 공지(화면은 먼저 그리고 뒤에 채움)
   homeMbBanner();   // 📮 내 사서함번호 공지(10-15)
 }
@@ -1073,6 +1077,8 @@ function renderGroupBuy() {
     · 산 물건은 <b>내 재고로 바로 들어와요</b> (바로 배송요청 가능).<br>
     · 결제 후 취소는 강사에게 문의해주세요.</div>`;
   h += `<div class="card">${bizNoField('gbBiz')}</div>`;
+  h += `<button class="btn mini ghost" id="dealPushBtn" style="margin:0 0 10px" onclick="toggleDealPush()">🔔 알림 받기</button>
+    <p class="muted" style="font-size:11.5px;margin:-6px 0 10px">켜 두면 새 공동구매가 열릴 때 폰으로 알려드려요 (할인 알림과 같은 스위치).</p>`;
   const items = d.items || [];
   if (!items.length) h += `<div class="empty">지금 진행 중인 공동구매가 없어요.</div>`;
   h += items.map(x => {
@@ -1102,6 +1108,7 @@ function renderGroupBuy() {
     return c + `</div>`;
   }).join('');
   $('pane').innerHTML = h;
+  try { refreshPushBtn(); } catch (_) {}
 }
 function gbFeePct(x) { return Math.round((Number(x && x.feeRate) || 0) * 1000) / 10; }
 function gbShort(r) {
@@ -2326,7 +2333,7 @@ async function refreshPushBtn() {
   }
   const sub = await pushCurrentSub();
   btn.disabled = false;
-  btn.textContent = sub ? '🔕 할인 알림 끄기' : '🔔 핫딜 알림 받기';
+  btn.textContent = sub ? '🔕 알림 끄기 (핫딜·공동구매)' : '🔔 알림 받기 (핫딜·공동구매)';
   btn.classList.toggle('ghost', !!sub);
 }
 window.toggleDealPush = async function () {
@@ -2337,14 +2344,14 @@ window.toggleDealPush = async function () {
     if (cur) {                                             // 끄기
       try { await api('pushSub', { sub: { endpoint: cur.endpoint }, off: true }); } catch (_) {}
       await cur.unsubscribe();
-      toast('할인 알림을 껐어요');
+      toast('알림을 껐어요');
     } else {                                               // 켜기
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') { toast('알림 권한을 허용해야 받을 수 있어요'); await refreshPushBtn(); return; }
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(window.PUSH_PUBKEY) });
       const d = await api('pushSub', { sub: sub.toJSON() });
-      if (d && d.ok) toast('좋아요! 새 핫딜이 뜨면 알려드릴게요 🔔');
+      if (d && d.ok) toast('좋아요! 새 핫딜·공동구매가 뜨면 알려드릴게요 🔔');
       else { await sub.unsubscribe(); toast('저장에 실패했어요. 잠시 후 다시 시도해주세요.'); }
     }
   } catch (e) { toast('알림 설정에 실패했어요'); }
@@ -2620,7 +2627,8 @@ function renderDeals() {
   if (DEALS.filter === 'mine') {
     const q = DEALS.myQuota;
     h += (q ? `<div class="dealQuota">${dealQuotaText()}</div>` : '')
-      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${dealHoldText(q)} 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 ${(q ? q.days : 1) <= 1 ? `매일 ${q ? q.todayMax : 3}개` : `한 번에 ${q ? q.heldMax : 3}개 · 하루 ${q ? q.todayMax : 3}개`} · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>` + dealMyClaimsHtml();
+      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${dealHoldText(q)} 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 ${(q ? q.days : 1) <= 1 ? `매일 ${q ? q.todayMax : 3}개` : `한 번에 ${q ? q.heldMax : 3}개 · 하루 ${q ? q.todayMax : 3}개`} · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>`
+      + `<button class="btn ghost" style="margin:0 0 8px;padding:8px" onclick="viewDealHistory()">📜 지난 찜 기록 전체 보기</button>` + dealMyClaimsHtml();   // 11-05
     $('pane').innerHTML = h; refreshPushBtn(); return;
   }
   h += list.slice(0, 100).map(it => `
@@ -2694,8 +2702,9 @@ async function checkNegativeBalance() {
     checkNegativeBalance();          // 미수금이면 안내가 화면을 덮는다
     if (location.hash === '#deals') go('deals');    // 푸시 알림 눌러 들어온 경우 → 할인 탭
     if (location.hash === '#pt') go('pt');          // 📈 가격 알림 눌러 들어온 경우
+    if (location.hash === '#gb') go('gb');          // 🤝 공동구매 알림 눌러 들어온 경우(11-05)
     // 강사가 기수를 바꿨으면 따라잡는다 (바뀌면 화면도 새로 그림)
-    refreshSessionCohort().then(function (ch) { if (ch && location.hash !== '#deals' && location.hash !== '#pt') enterMain(); });
+    refreshSessionCohort().then(function (ch) { if (ch && !['#deals', '#pt', '#gb'].includes(location.hash)) enterMain(); });
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -2770,5 +2779,91 @@ function addrHtmlM(d) {
   h += `</div><div class="addrSec"><b>③ 로드뷰</b>`;
   if (k.x && k.y && d.jsKey) h += `<iframe class="addrRv" src="${ROADVIEW_URL_M}?lat=${encodeURIComponent(k.y)}&lng=${encodeURIComponent(k.x)}&key=${encodeURIComponent(d.jsKey)}" loading="lazy"></iframe>`;
   else h += `<div class="muted">${d.jsKey ? '위치를 찾지 못해 로드뷰를 띄울 수 없어요.' : '로드뷰는 아직 준비 중이에요.'}</div>`;
-  return h + `</div><p class="muted" style="font-size:12px">※ 결과는 참고용 신호예요. 확인한 주소와 결과는 강사님이 볼 수 있게 기록돼요.</p>`;
+  return h + `</div><p class="muted" style="font-size:12px">※ 결과는 참고용 신호예요.</p>`;
+}
+
+// ── ✏️ 홈 메뉴 편집 (11-04 루크) — 안 쓰는 홈 버튼을 숨김(이 폰·이 아이디에만). PC와 같은 생각, 버튼 이름으로 저장 ──
+function quickKeyM() { return 'quickHidden_' + ((session && session.userId) || ''); }
+function quickLabel(b) { return (b.textContent || '').trim(); }
+function applyQuickHideM() {
+  const hid = new Set(store.get(quickKeyM(), []) || []);
+  document.querySelectorAll('.quick button[data-q]').forEach(b => { b.style.display = (hid.has(b.dataset.q) || (b.dataset.faq && !FAQ_ON)) ? 'none' : ''; });   // ❓ 공개 FAQ 없으면 숨김
+}
+window.mNavEdit = function () {
+  const hid = new Set(store.get(quickKeyM(), []) || []);
+  const btns = [...document.querySelectorAll('.quick button[data-q]')].filter(b => !(b.dataset.faq && !FAQ_ON));
+  sheet(`<h3>✏️ 홈 메뉴 편집</h3>
+    <p class="muted" style="font-size:12.5px">체크를 끄면 홈 화면에서 숨겨져요. 언제든 다시 켤 수 있어요. (이 폰에만 적용)</p>
+    <div class="navEditList">${btns.map(b => `<label class="navEditRow"><input type="checkbox" data-q="${esc(b.dataset.q)}" ${hid.has(b.dataset.q) ? '' : 'checked'}> <span>${b.innerHTML}</span></label>`).join('')}</div>
+    <div class="row"><button class="btn ghost" onclick="document.querySelectorAll('.navEditList input').forEach(c=>c.checked=true)">모두 보이기</button>
+      <button class="btn" onclick="mNavEditSave()">저장</button></div>`);
+};
+window.mNavEditSave = function () {
+  const hid = [...document.querySelectorAll('.navEditList input[data-q]')].filter(c => !c.checked).map(c => c.dataset.q);
+  store.set(quickKeyM(), hid); closeSheet(true); applyQuickHideM();
+};
+
+// ── ❓ 자주 묻는 질문 (11-04) — 강사가 공개 체크한 것만. 하나도 없으면 홈 버튼이 안 보임 ──
+let FAQ = [], FAQ_ON = false;
+async function loadFaqM() {
+  if (!BRAIN.questionsUrl) return;
+  try { const d = await qApi('getFaq'); FAQ = (d && d.ok && d.items) || []; } catch (_) { FAQ = []; }
+  FAQ_ON = FAQ.length > 0;
+  applyQuickHideM();
+}
+function viewFaq() {
+  $('pane').innerHTML = `<div class="sec">❓ 자주 묻는 질문</div>
+    <p class="muted" style="font-size:13px;margin:0 2px 8px">수강생분들이 많이 물어본 질문을 모았어요. 여기 없는 건 [💬 질문하기]로 물어봐 주세요.</p>
+    <input type="text" id="faqQ" placeholder="궁금한 내용으로 찾기 (예: 택배 마감)" oninput="faqRenderM()" autocomplete="off">
+    <div id="faqList"></div>`;
+  faqRenderM();
+}
+window.faqRenderM = function () {
+  const box = $('faqList'); if (!box) return;
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s/g, '');
+  const q = norm($('faqQ') && $('faqQ').value);
+  const list = q ? FAQ.filter(x => norm(x.q + x.a + x.cat).includes(q)) : FAQ;
+  if (!list.length) { box.innerHTML = `<div class="empty">${q ? '찾는 내용이 없어요. [💬 질문하기]로 물어봐 주세요.' : '아직 등록된 질문이 없어요.'}</div>`; return; }
+  const cats = []; list.forEach(x => { if (!cats.includes(x.cat)) cats.push(x.cat); });
+  box.innerHTML = cats.map(c => `<div class="faqCat">${esc(c)}</div>` + list.filter(x => x.cat === c).map(x =>
+    `<details class="faqItem"${q ? ' open' : ''}><summary>${esc(x.q)}</summary><div class="faqA">${esc(x.a).replace(/\n/g, '<br>')}</div></details>`).join('')).join('');
+};
+
+// ── 📜 내 찜 기록 (11-05) — PC와 같은 내용. 지난 찜·푼 찜 포함, 구매처·네이버 다시 열기 ──
+let DHIST = null, DHIST_Q = '', DHIST_WIN = false;
+window.viewDealHistory = async function () {
+  $('pane').innerHTML = `<div class="sec">📜 내 찜 기록</div><div class="empty">불러오는 중...</div>`;
+  try { const d = await api('dealHistory', {}); DHIST = (d && d.ok && d.items) || []; } catch (_) { DHIST = null; }
+  DHIST_Q = ''; DHIST_WIN = false;
+  if (DHIST === null) { $('pane').innerHTML = `<div class="sec">📜 내 찜 기록</div><div class="empty">연결 오류로 불러오지 못했어요.</div><button class="btn ghost" onclick="setDealFilter('mine')">← 내 찜으로</button>`; return; }
+  const all = DHIST, win = all.filter(c => (c.margin || 0) > 0).length;
+  const mk = {}; all.forEach(c => { if ((c.margin || 0) > 0 && c.market) mk[c.market] = (mk[c.market] || 0) + 1; });
+  const mkTop = Object.keys(mk).sort((a, b) => mk[b] - mk[a]).slice(0, 4).map(m => `${esc(m)} ${mk[m]}`).join(' · ');
+  $('pane').innerHTML = `<div class="sec">📜 내 찜 기록</div>
+    <button class="btn ghost" style="margin:0 0 8px;padding:7px" onclick="setDealFilter('mine')">← 내 찜으로</button>
+    <p class="muted" style="font-size:12.5px;margin:0 2px 8px">찜한 상품 <b>${all.length}개</b> · 마진 남았던 것 <b>${win}개</b>${mkTop ? `<br>마진 남았던 구매처: ${mkTop}` : ''}<br>풀린 찜도 구매처·네이버 가격비교를 다시 열 수 있어요. 할인이 끝났으면 가격이 달라져 있을 수 있어요.</p>
+    <input type="text" id="dhQ" placeholder="상품명·구매처로 찾기" oninput="dealHistFilterM()" autocomplete="off">
+    <label class="dhWin"><input type="checkbox" id="dhWin" onchange="dealHistFilterM()"> 마진 남았던 것만</label>
+    <div id="dhList"></div>`;
+  dealHistListM();
+};
+window.dealHistFilterM = function () {
+  const q = $('dhQ'); DHIST_Q = q ? q.value : '';
+  const w = $('dhWin'); DHIST_WIN = !!(w && w.checked);
+  dealHistListM();
+};
+function dealHistListM() {
+  const box = $('dhList'); if (!box) return;
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s/g, '');
+  const q = norm(DHIST_Q);
+  const list = (DHIST || []).filter(c => (!q || norm(c.name + c.market + c.naverName).includes(q)) && (!DHIST_WIN || (c.margin || 0) > 0));
+  if (!list.length) { box.innerHTML = `<div class="empty">${(DHIST || []).length ? '조건에 맞는 기록이 없어요.' : '아직 찜한 기록이 없어요.'}</div>`; return; }
+  const won = (n) => (n > 0 ? '+' : '') + Number(n).toLocaleString() + '원';
+  box.innerHTML = list.map(c => `<div class="card dhRow">
+      <div class="dhTop"><span class="dhSt st${c.state === '찜 중' ? 'On' : (c.state === '풀었음' ? 'Undo' : 'End')}">${esc(c.state)}</span>
+        <span class="muted">${esc(c.at)}</span>${c.market ? ` <span class="tagMkt">${esc(c.market)}</span>` : ''}${c.newbie ? ' <span class="dhNb">⭐ 초보 추천</span>' : ''}</div>
+      <div class="dhNm">${esc(c.name)}</div>
+      <div class="dhMt">매입가 <b>${c.price ? Number(c.price).toLocaleString() + '원' : '-'}</b> · 마진 <b class="${(c.margin || 0) > 0 ? 'pos' : 'neg'}">${c.margin === null || c.margin === undefined ? '-' : won(c.margin)}</b>${c.category ? ` · ${esc(c.category)}` : ''}</div>
+      <div class="dhBtns">${c.url ? `<button class="chip" onclick="openDeal('${esc(c.url)}')">🛒 구매처</button>` : '<span class="muted" style="font-size:11.5px">구매처 링크 없음(예전 기록)</span>'}${c.naverUrl ? `<button class="chip" onclick="openDeal('${esc(c.naverUrl)}')">🟢 네이버 가격비교</button>` : ''}</div>
+    </div>`).join('');
 }

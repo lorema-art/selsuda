@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b2a4a">
+<title>입고 검수</title>
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --text:#1d2433; --muted:#6b7385; --line:#e3e7ef; --pri:#1b2a4a; --ok:#1f9d55; --warn:#e8590c; --pink:#e0457e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:var(--pri); color:#fff; padding:12px 16px; display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  header button { background:rgba(255,255,255,.15); color:#fff; border:0; border-radius:8px; padding:6px 10px; font-size:13px; }
+  main { padding:14px 16px 90px; max-width:640px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  .muted { color:var(--muted); font-size:13px; }
+  input, textarea { width:100%; font:inherit; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .btn { display:block; width:100%; border:0; border-radius:10px; padding:13px; font:inherit; font-weight:700; background:var(--pri); color:#fff; margin-top:10px; }
+  .btn.ok { background:var(--ok); } .btn.ghost { background:#fff; color:var(--pri); border:1px solid var(--line); } .btn.pink { background:var(--pink); }
+  .btn:disabled { opacity:.5; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; }
+  .mb { display:inline-block; font-weight:800; background:#eef3ff; color:var(--pri); border-radius:6px; padding:1px 7px; margin-right:6px; }
+  .grp { display:flex; align-items:center; justify-content:space-between; }
+  .cnt { background:var(--pink); color:#fff; border-radius:999px; padding:1px 9px; font-size:13px; font-weight:700; }
+  .item { cursor:pointer; } .item b { display:block; }
+  .warn { background:#fff4e6; border:1px solid #ffd8a8; color:#a3470b; border-radius:10px; padding:8px 10px; font-size:13px; margin-top:8px; }
+  .ai { background:#eef8f1; border:1px solid #c3e6cb; color:#14532d; border-radius:10px; padding:8px 10px; font-size:13px; margin-top:8px; }
+  .thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; } .thumbs img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; z-index:20; max-width:90%; }
+  .hidden { display:none !important; }
+  .chk { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:14px; } .chk input { width:auto; margin-top:4px; }
+  h2 { font-size:16px; margin:4px 0 10px; }
+  .back { background:none; border:0; color:var(--pri); font:inherit; padding:0 0 10px; }
+</style>
+</head>
+<body>
+<header><h1>📷 입고 검수</h1><button id="hdrBtn" class="hidden" onclick="home()">사서함 목록</button></header>
+<main id="main"></main>
+<div id="toast" class="toast hidden"></div>
+<script src="config.js"></script>
+<script>
+'use strict';
+// 물류담당자 전용 — 수강생 로그인 없이 '검수 비밀번호'로 배송 두뇌의 insp* 기능만 쓴다(11-06).
+const URL_ = (window.BRAIN || {}).deliveryUrl;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (_) { return ''; } }, set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (_) {} } };
+let PIN = store.get('insp_pin'), AI = false, GROUPS = [], ITEMS = [], CODE = '', CUR = null, PH = [];
+function toast(t, ms) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), ms || 2500); }
+async function call(action, extra) {
+  const res = await fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action, pin: PIN }, extra || {})) });
+  const d = await res.json();
+  if (d && d.badPin) { store.set('insp_pin', ''); PIN = ''; }
+  return d;
+}
+// 사진 줄이기 — 저장용 1600px, AI용 1280px (JPEG)
+function shrink(file, max) {
+  return new Promise((ok, no) => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
+      ok(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(u); no(new Error('사진을 읽지 못했어요')); };
+    img.src = u;
+  });
+}
+
+// ── 비밀번호 ──
+function pinView(msg) {
+  $('hdrBtn').classList.add('hidden');
+  $('main').innerHTML = `<div class="card"><h2>검수 비밀번호</h2>
+    <p class="muted">강사님께 받은 검수 비밀번호를 넣어주세요. 이 폰에 기억돼요.</p>
+    <input id="pin" type="password" autocomplete="current-password" placeholder="비밀번호">
+    ${msg ? `<div class="warn">${esc(msg)}</div>` : ''}
+    <button class="btn" onclick="savePin()">시작하기</button></div>`;
+}
+window.savePin = function () { PIN = $('pin').value.trim(); if (!PIN) return; store.set('insp_pin', PIN); home(); };
+
+// ── 사서함 목록 ──
+window.home = async function () {
+  if (!PIN) return pinView();
+  CODE = ''; CUR = null; $('hdrBtn').classList.add('hidden');
+  $('main').innerHTML = `<div class="card"><label style="margin-top:0">사서함 코드 · 이름으로 찾기</label>
+    <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
+    <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p></div>
+    <div id="grp"><div class="muted">검수 대기 목록 불러오는 중…</div></div>`;
+  let d; try { d = await call('inspList', {}); } catch (e) { $('grp').innerHTML = `<div class="warn">연결 오류예요. 잠시 뒤 다시 열어주세요.</div>`; return; }
+  if (!d.ok) return pinView(d.error);
+  AI = !!d.aiReady; GROUPS = d.groups || [];
+  $('grp').innerHTML = `<h2>검수 대기 ${GROUPS.reduce((a, g) => a + g.n, 0)}건 · ${GROUPS.length}명</h2>` + (GROUPS.length ? GROUPS.map(g =>
+    `<div class="card item grp" onclick="openCode('${esc(g.mb || g.name)}')"><span><span class="mb">${esc(g.mb || '번호없음')}</span>${esc(g.name)}</span><span class="cnt">${g.n}</span></div>`).join('')
+    : `<div class="card muted">검수 대기 중인 입고가 없어요 🎉</div>`);
+};
+window.openCode = async function (q) {
+  q = String(q || '').trim(); if (!q) return;
+  CODE = q; $('hdrBtn').classList.remove('hidden');
+  $('main').innerHTML = `<div class="muted">불러오는 중…</div>`;
+  let d; try { d = await call('inspList', { q }); } catch (e) { $('main').innerHTML = `<div class="warn">연결 오류예요.</div>`; return; }
+  if (!d.ok) return pinView(d.error);
+  AI = !!d.aiReady; ITEMS = d.items || [];
+  const who = ITEMS[0] ? `<span class="mb">${esc(ITEMS[0].mb || '')}</span>${esc(ITEMS[0].name)}` : esc(q);
+  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><h2>${who} · 검수 대기 ${ITEMS.length}건</h2>` +
+    (ITEMS.length ? ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})">
+      <b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
+      <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}${it.mb && ITEMS.some(x => x.mb !== it.mb) ? ' · ' + esc(it.mb + ' ' + it.name) : ''}</span>
+      ${it.memo ? `<div class="muted">📝 ${esc(it.memo)}</div>` : ''}
+      ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)} — 두 번 등록한 건 아닌지 확인</div>` : ''}</div>`).join('')
+      : `<div class="card muted">'${esc(q)}' 검수 대기 입고가 없어요.</div>`) +
+    `<button class="btn ghost" onclick="unregView()">➕ 등록 안 된 물건 입고 추가</button>`;
+};
+
+// ── 상품 검수 ──
+function photoBlock() {
+  return `<label>사진 (수량·유통기한이 보이게)</label>
+    <input id="ph" type="file" accept="image/*" capture="environment" multiple class="hidden" onchange="addPhotos(this.files)">
+    <button type="button" class="btn ghost" style="margin-top:0" onclick="$('ph').click()">📷 사진 찍기 / 추가</button>
+    <div class="thumbs" id="thumbs"></div><div id="aiBox"></div>`;
+}
+window.openItem = function (i) {
+  CUR = ITEMS[i]; PH = [];
+  $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
+    <div class="card"><span class="mb">${esc(CUR.mb)}</span>${esc(CUR.name)}<h2 style="margin-top:8px">${esc(CUR.product)}${CUR.option ? ' · ' + esc(CUR.option) : ''}</h2>
+      <div class="muted">수강생 등록 수량 <b>${CUR.qty}개</b>${CUR.site ? ' · ' + esc(CUR.site) : ''}</div>
+      ${CUR.memo ? `<div class="muted">📝 ${esc(CUR.memo)}</div>` : ''}
+      ${CUR.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(CUR.dup)}</div>` : ''}
+      ${photoBlock()}
+      <label>유통기한</label><input id="exp" placeholder="예: 2027-05-31 (AI가 사진에서 읽어 채워요)" value="${esc(CUR.exp || '')}">
+      <label>실제 개수</label><input id="cnt" type="number" inputmode="numeric" value="${CUR.qty}" oninput="qtyCheck()">
+      <div id="qtyBox"></div>
+      <label>메모 (선택)</label><input id="note" placeholder="파손·포장상태 등">
+      <button class="btn ok" id="doneBtn" onclick="done()">✅ 검수 완료</button>
+    </div>`;
+};
+window.qtyCheck = function () {
+  const c = Number($('cnt').value), box = $('qtyBox');
+  if (!box) return;
+  box.innerHTML = (CUR && $('cnt').value !== '' && c !== CUR.qty)
+    ? `<div class="warn">등록 ${CUR.qty}개와 달라요.<label class="chk"><input type="checkbox" id="fix"> 재고 수량을 실제 개수(${c}개)로 고치기</label>
+       <span class="muted">체크 안 하면 수량은 그대로 두고 메모에만 남겨요.</span></div>` : '';
+};
+window.addPhotos = async function (files) {
+  const list = Array.from(files || []); if (!list.length) return;
+  for (const f of list) { try { PH.push({ big: await shrink(f, 1600), ai: await shrink(f, 1280) }); } catch (e) { toast(e.message); } }
+  $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
+  $('ph').value = '';
+  if (!AI) { $('aiBox').innerHTML = `<div class="muted" style="margin-top:6px">AI 자동 읽기가 꺼져 있어요(키 없음). 유통기한을 직접 넣어주세요.</div>`; return; }
+  $('aiBox').innerHTML = `<div class="ai">🤖 사진에서 유통기한·개수 읽는 중…</div>`;
+  let d;
+  try { d = await call('inspRead', { images: PH.slice(-3).map(p => p.ai), product: CUR ? CUR.product : ($('uProd') || {}).value, option: CUR ? CUR.option : '', qty: CUR ? CUR.qty : Number(($('uQty') || {}).value || 0) }); }
+  catch (e) { $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 넣어주세요.</div>`; return; }
+  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 넣어주세요.</div>`; return; }
+  const ex = $('exp') || $('uExp'), cn = $('cnt') || $('uQty');
+  if (d.expiry && ex) ex.value = d.expiry;
+  if (d.count != null && cn) { cn.value = d.count; if ($('cnt')) qtyCheck(); }
+  $('aiBox').innerHTML = `<div class="ai">🤖 유통기한 <b>${esc(d.expiry || '못 찾음')}</b>${d.expiryText ? ` (사진: ${esc(d.expiryText)})` : ''} · 개수 <b>${d.count == null ? '못 셈' : d.count + '개'}</b>
+      ${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}<br><span class="muted">AI가 읽은 값이에요. 맞는지 눈으로 확인해 주세요.</span></div>`
+    + (d.sameProduct === false ? `<div class="warn">⚠ AI가 보기엔 등록 상품과 다른 물건 같아요. 상품을 다시 확인해 주세요.</div>` : '');
+};
+window.done = async function () {
+  const b = $('doneBtn'); b.disabled = true; b.textContent = '저장 중…';
+  const c = $('cnt').value;
+  if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) { b.disabled = false; b.textContent = '✅ 검수 완료'; return; }
+  let d;
+  try { d = await call('inspDone', { row: CUR.row, at: CUR.at, product: CUR.product, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
+    fixQty: !!($('fix') && $('fix').checked), note: $('note').value.trim(), photos: PH.map(p => p.big) }); }
+  catch (e) { d = { ok: false, error: '연결 오류 — 시트에 들어갔는지 목록을 새로 열어 확인해 주세요.' }; }
+  if (!d.ok) { alert(d.error || '저장하지 못했어요'); b.disabled = false; b.textContent = '✅ 검수 완료'; return; }
+  toast('검수 완료 ✅' + (d.photos ? ` (사진 ${d.photos}장)` : ''));
+  openCode(CODE);
+};
+
+// ── 미등록 입고 ──
+window.unregView = function () {
+  CUR = null; PH = [];
+  const mb = (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
+  $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
+    <div class="card"><h2>➕ 등록 안 된 물건 입고</h2>
+      <p class="muted">수강생이 입고 등록을 안 하고 보낸 물건이에요. 그 학생 앞으로 입고를 만들고 바로 검수 처리해요.</p>
+      <label>사서함 코드</label><input id="uMb" value="${esc(mb)}" placeholder="예: B009" autocapitalize="characters">
+      <label>상품명 (카탈로그명 그대로면 좋아요)</label><input id="uProd" placeholder="상품명">
+      <label>옵션 (선택)</label><input id="uOpt">
+      ${photoBlock()}
+      <label>수량</label><input id="uQty" type="number" inputmode="numeric" value="1">
+      <label>유통기한</label><input id="uExp" placeholder="예: 2027-05-31">
+      <label>메모 (선택)</label><input id="uNote">
+      <button class="btn pink" id="uBtn" onclick="unregSave()">입고 추가 + 검수 완료</button></div>`;
+};
+window.unregSave = async function () {
+  const b = $('uBtn'); b.disabled = true; b.textContent = '저장 중…';
+  let d;
+  try { d = await call('inspAddUnreg', { mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
+    expiry: $('uExp').value.trim(), note: $('uNote').value.trim(), photos: PH.map(p => p.big) }); }
+  catch (e) { d = { ok: false, error: '연결 오류 — 시트에 들어갔는지 목록을 새로 열어 확인해 주세요.' }; }
+  if (!d.ok) { alert(d.error || '저장하지 못했어요'); b.disabled = false; b.textContent = '입고 추가 + 검수 완료'; return; }
+  toast('입고 추가 + 검수 완료 ✅ (재고내역 ' + d.row + '행)', 3500);
+  openCode(CODE || $('uMb').value.trim());
+};
+
+if (!URL_) $('main').innerHTML = `<div class="warn">두뇌 주소(config.js)를 못 읽었어요.</div>`; else home();
+</script>
+</body>
+</html>

@@ -502,7 +502,9 @@ function weekFull(dateStr) {
   if (!(CO.weekQuota > 0)) return false;
   return (CO.myWeeks[monOf(dateStr)] || 0) >= CO.weekQuota;
 }
-function freeForOwner(date, time, owner) {
+function freeForOwner(date, time, owner, secName) {
+  const sf = (CO.slotSec || {})[date + ' ' + time];   // 분야별 남은 자리(코치별 받을 분야 반영, 11-06)
+  if (sf && secName && sf[secName] != null) return Number(sf[secName]) || 0;
   const r = CO.slotRoles[date + ' ' + time];
   if (!r) return null;
   const want = String(owner || '').trim();
@@ -522,7 +524,7 @@ async function viewCoach() {
   }
   if (d && !d.ok && d.error) { $('pane').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
   if (!d || !d.ok) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.</div>`; return; }
-  CO.sections = d.sections || []; CO.slotRoles = {};
+  CO.sections = d.sections || []; CO.slotRoles = {}; CO.slotSec = {};
   const mine = d.myBookings || [];
   // 주당 신청 제한 — 이미 신청한 주는 미리 회색으로
   CO.weekQuota = Number(d.weekQuota != null ? d.weekQuota : 1);
@@ -541,7 +543,7 @@ async function viewCoach() {
   let body = '';
   weeks.forEach(w => (w.days || []).forEach(day => {
     const slots = (day.slots || []).filter(s => s.state === 'open' || s.state === 'mine');
-    slots.forEach(s => { if (s.roles) CO.slotRoles[day.date + ' ' + s.time] = s.roles; });
+    slots.forEach(s => { if (s.roles) CO.slotRoles[day.date + ' ' + s.time] = s.roles; if (s.secFree) CO.slotSec[day.date + ' ' + s.time] = s.secFree; });
     if (!slots.length) return;
     any = true;
     body += `<div class="coDay"><div class="coDayHd">${dayLabel(day.date)}</div><div class="chips">` +
@@ -591,9 +593,9 @@ window.coPick = function (i) {
     h += `<div class="checks"><h4>신청 전에 확인해주세요${s.required ? ' <span class="muted">(모두 체크해야 신청돼요)</span>' : ''}</h4>` +
       list.map(c => `<label><input type="checkbox" class="chk"><span>${esc(c)}</span></label>`).join('') + `</div>`;
   }
-  const av = CO.pick ? freeForOwner(CO.pick.date, CO.pick.time, s.owner) : null;
+  const av = CO.pick ? freeForOwner(CO.pick.date, CO.pick.time, s.owner, s.name) : null;
   if (av !== null && av <= 0) {
-    h += `<div class="noSeat">이 시간에는 <b>${esc(s.owner)}</b> 자리가 없어요.<br>다른 시간을 고르시거나, 다른 상담을 선택해주세요.</div>`;
+    h += `<div class="noSeat">이 시간에는 <b>${esc(s.name)}</b> 상담 자리가 없어요.<br>다른 시간을 고르시거나, 다른 상담을 선택해주세요.</div>`;
     CO.topic = null;
   }
   $('coBox').innerHTML = h;

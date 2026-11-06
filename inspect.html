@@ -112,7 +112,7 @@ window.openCode = async function (q) {
       ${it.memo ? `<div class="muted">📝 ${esc(it.memo)}</div>` : ''}
       ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)} — 두 번 등록한 건 아닌지 확인</div>` : ''}</div>`).join('')
       : `<div class="card muted">'${esc(q)}' 검수 대기 입고가 없어요.</div>`) +
-    `<button class="btn ghost" onclick="unregView()">➕ 등록 안 된 물건 입고 추가</button>`;
+    `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>`;
 };
 
 // ── 상품 검수 ──
@@ -180,25 +180,26 @@ window.unregView = function () {
   CUR = null; PH = [];
   const mb = (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
-    <div class="card"><h2>➕ 등록 안 된 물건 입고</h2>
-      <p class="muted">수강생이 입고 등록을 안 하고 보낸 물건이에요. 그 학생 앞으로 입고를 만들고 바로 검수 처리해요.</p>
+    <div class="card"><h2>📦 등록 안 된 물건</h2>
+      <p class="muted">수강생이 입고 등록을 안 하고 보낸 물건이에요. 사진을 찍어 보내면 그 수강생 앱에 사진과 함께 <b>"직접 입고 등록해 주세요"</b> 안내가 자동으로 가요.<br>재고내역에는 넣지 않아요. 수강생이 등록하면 평소처럼 검수 목록에 떠요.</p>
       <label>사서함 코드</label><input id="uMb" value="${esc(mb)}" placeholder="예: B009" autocapitalize="characters">
-      <label>상품명 (카탈로그명 그대로면 좋아요)</label><input id="uProd" placeholder="상품명">
+      <label>상품명 (선택 · 알면 적어주세요)</label><input id="uProd" placeholder="상품명">
       <label>옵션 (선택)</label><input id="uOpt">
       ${photoBlock()}
-      <label>수량</label><input id="uQty" type="number" inputmode="numeric" value="1">
+      <label>개수 (선택)</label><input id="uQty" type="number" inputmode="numeric" placeholder="예: 3">
       <label>유통기한</label><input id="uExp" placeholder="예: 2027-05-31">
-      <label>메모 (선택)</label><input id="uNote">
-      <button class="btn pink" id="uBtn" onclick="unregSave()">입고 추가 + 검수 완료</button></div>`;
+      <label>수강생에게 남길 말 (선택)</label><input id="uNote" placeholder="예: 박스 1개 도착">
+      <button class="btn pink" id="uBtn" onclick="unregSave()">📤 수강생에게 사진 보내기</button></div>`;
 };
 window.unregSave = async function () {
-  const b = $('uBtn'); b.disabled = true; b.textContent = '저장 중…';
+  if (!PH.length) { alert('사진을 1장 이상 찍어주세요 (수강생에게 보내져요)'); return; }
+  const b = $('uBtn'); b.disabled = true; b.textContent = '보내는 중…';
   let d;
   try { d = await call('inspAddUnreg', { mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
     expiry: $('uExp').value.trim(), note: $('uNote').value.trim(), photos: PH.map(p => p.big) }); }
-  catch (e) { d = { ok: false, error: '연결 오류 — 시트에 들어갔는지 목록을 새로 열어 확인해 주세요.' }; }
-  if (!d.ok) { alert(d.error || '저장하지 못했어요'); b.disabled = false; b.textContent = '입고 추가 + 검수 완료'; return; }
-  toast('입고 추가 + 검수 완료 ✅ (재고내역 ' + d.row + '행)', 3500);
+  catch (e) { d = { ok: false, error: '연결 오류 — 보내졌는지 시트 「미등록입고」 탭을 확인해 주세요.' }; }
+  if (!d.ok) { alert(d.error || '보내지 못했어요'); b.disabled = false; b.textContent = '📤 수강생에게 사진 보내기'; return; }
+  toast('📤 ' + (d.name || '') + ' 님에게 사진 ' + d.photos + '장 보냈어요', 3500);
   openCode(CODE || $('uMb').value.trim());
 };
 

@@ -554,6 +554,7 @@ async function viewCoach() {
   }));
   h += `<div class="sec">🗓️ 신청 가능한 자리</div>`;
   if (CO.weekQuota > 0) h += `<p class="muted" style="margin:0 2px 8px;font-size:12.5px">컨설팅은 <b>일주일에 ${CO.weekQuota}번</b>까지 신청할 수 있어요. 이미 신청한 주는 회색으로 보여요.</p>`;
+  if (d.nextOpenAt) h += `<p class="muted" style="margin:0 2px 8px;font-size:12.5px">🔒 다음 주 일정은 <b>${dayLabel(String(d.nextOpenAt).slice(0, 10))} 저녁 6시</b>에 공개되고, 그때부터 예약할 수 있어요.</p>`;
   h += any ? body : `<div class="empty">지금 열린 자리가 없어요.<br>자리가 열리면 여기에 표시됩니다.${d.leadDays ? `<br><span class="muted">(당일 신청은 받지 않아요)</span>` : ''}</div>`;
   $('pane').innerHTML = h;
 }

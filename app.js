@@ -1927,20 +1927,24 @@ function showNextMsg() {
   const more = MSG.queue.length > 1 ? `<p class="muted" style="margin-top:10px">읽지 않은 메시지가 ${MSG.queue.length - 1}개 더 있어요. <a href="#" onclick="ackAllMsg();return false">남은 메시지 모두 확인</a></p>` : '';
   const qMsg = String(q.message || '').trim();   // 어떤 문의에 대한 답변인지 원래 질문도 보여줌
   const qBox = qMsg ? `<div class="msgQ"><b>내 문의</b><br>${nl2br(qMsg)}</div>` : '';
-  sheet(`<h3>💬 물류담당자 답변</h3>
-    ${qBox}<div class="msgBox"><b>답변</b><br>${nl2br(q.reply || '')}${mMsgImgs(q)}</div>${more}
+  const notice = !qMsg;   // 📢 물류팀이 먼저 보낸 메시지(미등록 입고 사진·재알림 등) = 중요 공지로(11-09)
+  sheet(`<h3>${notice ? '📢 물류팀 중요 안내' : '💬 물류담당자 답변'}</h3>
+    ${qBox}<div class="msgBox${notice ? ' msgNotice' : ''}"><b>${notice ? '꼭 확인해 주세요' : '답변'}</b><br>${nl2br(q.reply || '')}${mMsgImgs(q)}</div>${more}
     <div class="row"><button class="btn" onclick="ackMsg()">확인했어요</button></div>`, true);
 }
+// 👀 [확인했어요] 시각 → 두뇌 '학생 확인' 칸(대표가 봤는지 확인, 11-09). 실패해도 화면은 그대로.
+const mAckServer = (ats) => { try { if (ats && ats.length) dlApi('inqAck', { ats }).catch(() => {}); } catch (_) {} };
 window.ackAllMsg = function () {   // 남은 메시지 한 번에 읽음 처리
   const m = msgAck();
   MSG.queue.forEach(q => { m[q.at] = mMsgSig(q); });
   msgAckSave(m);
+  mAckServer(MSG.queue.map(q => q.at));
   MSG.queue = []; MSG.showing = false;
   closeSheet(true);
 };
 window.ackMsg = function () {
   const q = MSG.queue.shift();
-  if (q) { const m = msgAck(); m[q.at] = mMsgSig(q); msgAckSave(m); }
+  if (q) { const m = msgAck(); m[q.at] = mMsgSig(q); msgAckSave(m); mAckServer([q.at]); }
   MSG.showing = false;
   closeSheet(true);
   if (MSG.queue.length) setTimeout(showNextMsg, 250);

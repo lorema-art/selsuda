@@ -31,6 +31,9 @@
   .thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; } .thumbs img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; z-index:20; max-width:90%; }
   .hidden { display:none !important; }
+  .qbar { position:sticky; top:52px; z-index:4; background:#fff8db; color:#7a5b00; border-bottom:1px solid #f1df9c; padding:8px 16px; font-size:13px; }
+  .qbar.bad { background:#ffe3e3; color:#a61e1e; border-color:#ffc9c9; }
+  .qbar button { margin-left:6px; border:0; border-radius:6px; background:#a61e1e; color:#fff; padding:3px 9px; font-size:12px; }
   .chk { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:14px; } .chk input { width:auto; margin-top:4px; }
   h2 { font-size:16px; margin:4px 0 10px; }
   .back { background:none; border:0; color:var(--pri); font:inherit; padding:0 0 10px; }
@@ -38,6 +41,7 @@
 </head>
 <body>
 <header><h1>📷 입고 검수</h1><button id="hdrBtn" class="hidden" onclick="home()">사서함 목록</button></header>
+<div id="qbar" class="qbar hidden"></div>
 <main id="main"></main>
 <div id="toast" class="toast hidden"></div>
 <script src="config.js"></script>
@@ -55,7 +59,7 @@ function matchQ(it, q) { q = String(q || '').toUpperCase().replace(/\s+/g, ''); 
   return code === q || (code + '|' + it.name + '|' + it.nick).toUpperCase().replace(/\s+/g, '').indexOf(q) >= 0; }
 function groupsOf(list) { const g = {}; list.forEach(it => { const k = it.mb || ('(' + it.name + ')'); g[k] = g[k] || { mb: it.mb, name: it.name, n: 0 }; g[k].n++; });
   return Object.values(g).sort((a, b) => String(a.mb || 'zz').localeCompare(String(b.mb || 'zz'))); }
-async function loadAll() { const d = await call('inspList', { all: 1 }); if (d.ok) { ALL = d.items || []; AI = !!d.aiReady; GROUPS = d.groups || groupsOf(ALL); } return d; }
+async function loadAll() { const d = await call('inspList', { all: 1 }); if (d.ok) { const busy = new Set((typeof Q !== 'undefined' ? Q : []).map(x => x.row)); ALL = (d.items || []).filter(x => !busy.has(x.row)); AI = !!d.aiReady; GROUPS = groupsOf(ALL); } return d; }
 function dropItem(it) { if (ALL && it) { ALL = ALL.filter(x => x.row !== it.row); GROUPS = groupsOf(ALL); } }
 function toast(t, ms) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), ms || 2500); }
 async function call(action, extra) {
@@ -72,7 +76,7 @@ function shrink(file, max) {
       const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
-      ok(c.toDataURL('image/jpeg', 0.82));
+      ok(c.toDataURL('image/jpeg', 0.78));
     };
     img.onerror = () => { URL.revokeObjectURL(u); no(new Error('사진을 읽지 못했어요')); };
     img.src = u;
@@ -163,7 +167,7 @@ window.qtyCheck = function () {
 };
 window.addPhotos = async function (files) {
   const list = Array.from(files || []); if (!list.length) return;
-  for (const f of list) { try { PH.push({ big: await shrink(f, 1600), ai: await shrink(f, 1280) }); } catch (e) { toast(e.message); } }
+  for (const f of list) { try { const im = await shrink(f, 1280); PH.push({ big: im, ai: im }); } catch (e) { toast(e.message); } }   // 속도(11-09): 1장으로(저장·AI 같은 1280px)
   $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
   $('ph').value = '';
   if (MODE === 'find') return findRead();
@@ -180,17 +184,42 @@ window.addPhotos = async function (files) {
       ${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}<br><span class="muted">AI가 읽은 값이에요. 맞는지 눈으로 확인해 주세요.</span></div>`
     + (d.sameProduct === false ? `<div class="warn">⚠ AI가 보기엔 등록 상품과 다른 물건 같아요. 상품을 다시 확인해 주세요.</div>` : '');
 };
-window.done = async function () {
-  const b = $('doneBtn'); b.disabled = true; b.textContent = '저장 중…';
+// ⚡ 검수 완료는 '뒤에서 저장'(11-09 루크 "저장 중이 너무 오래 걸려") — 누르면 바로 다음 물건으로 가고,
+//    저장은 순서대로 뒤에서 한다. 위 띠에 '저장 중 N건'이 보이고, 실패하면 빨간 띠에서 다시 저장할 수 있다.
+let Q = [], Q_RUN = false;
+function qBar() {
+  const bar = $('qbar'); if (!bar) return;
+  const wait = Q.filter(x => !x.err).length, bad = Q.filter(x => x.err);
+  bar.className = bad.length ? 'qbar bad' : (wait ? 'qbar' : 'qbar hidden');
+  bar.innerHTML = bad.length
+    ? `⚠ 저장 실패 ${bad.length}건 — ${bad.map(x => esc(x.label + ': ' + x.err)).join(' / ')} <button onclick="qRetry()">다시 저장</button>`
+    : `⏳ 뒤에서 저장 중 ${wait}건… 다음 물건 하셔도 돼요`;
+}
+async function qRun() {
+  if (Q_RUN) return; Q_RUN = true;
+  try {
+    for (;;) {
+      const job = Q.find(x => !x.err); if (!job) break;
+      let d;
+      try { d = await call('inspDone', job.body); } catch (e) { d = { ok: false, error: '연결 오류' }; }
+      if (d.ok || /이미 검수된/.test(d.error || '')) { Q = Q.filter(x => x !== job); toast('저장됨 ✅ ' + job.label + (d.photos ? ` (사진 ${d.photos}장)` : '')); }
+      else { job.err = d.error || '저장 실패'; if (d.badPin) { qBar(); return pinView(d.error); } }
+      qBar();
+    }
+  } finally { Q_RUN = false; qBar(); }
+}
+window.qRetry = function () { Q.forEach(x => { x.err = ''; }); qBar(); qRun(); };
+window.addEventListener('beforeunload', e => { if (Q.length) { e.preventDefault(); e.returnValue = ''; } });
+window.done = function () {
   const c = $('cnt').value;
-  if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) { b.disabled = false; b.textContent = '✅ 검수 완료'; return; }
-  let d;
-  try { d = await call('inspDone', { row: CUR.row, at: CUR.at, product: CUR.product, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
-    fixQty: !!($('fix') && $('fix').checked), note: $('note').value.trim(), photos: PH.map(p => p.big) }); }
-  catch (e) { d = { ok: false, error: '연결 오류 — 시트에 들어갔는지 목록을 새로 열어 확인해 주세요.' }; }
-  if (!d.ok) { alert(d.error || '저장하지 못했어요'); b.disabled = false; b.textContent = '✅ 검수 완료'; return; }
-  toast('검수 완료 ✅' + (d.photos ? ` (사진 ${d.photos}장)` : ''));
-  dropItem(CUR); loadAll().catch(() => {});                 // 화면은 바로, 목록은 뒤에서 새로
+  if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) return;
+  const it = CUR;
+  Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product, err: '',
+    body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
+            fixQty: !!($('fix') && $('fix').checked), note: $('note').value.trim(), photos: PH.map(p => p.big) } });
+  qBar(); qRun();
+  dropItem(it); PH = [];
+  toast('검수 완료 ✅ 뒤에서 저장할게요');
   openCode(CODE);
 };
 

@@ -502,6 +502,24 @@ function weekFull(dateStr) {
   if (!(CO.weekQuota > 0)) return false;
   return (CO.myWeeks[monOf(dateStr)] || 0) >= CO.weekQuota;
 }
+// 코치별 받을 방식(온라인/오프라인, 11-09) — 그 시간·분야에 자리가 없는 방식은 못 고르게 막는다.
+function coApplyModes() {
+  if (!CO.pick) return;
+  const mf = (CO.slotMode || {})[CO.pick.date + ' ' + CO.pick.time];
+  const av = mf ? mf[CO.topic ? CO.topic.name : '*'] : null;
+  const radios = Array.from(document.querySelectorAll('input[name=coMode]'));
+  radios.forEach(r => {
+    const n = av ? Number(av[r.value] || 0) : null;
+    r.disabled = n === 0;
+    const lab = r.closest('label'); if (!lab) return;
+    lab.style.opacity = n === 0 ? '.45' : '';
+    let tag = lab.querySelector('.coModeNo');
+    if (n === 0 && !tag) { tag = document.createElement('span'); tag.className = 'coModeNo'; tag.textContent = ' (자리 없음)'; tag.style.fontSize = '12px'; lab.appendChild(tag); }
+    if (n !== 0 && tag) tag.remove();
+  });
+  const cur = radios.find(r => r.checked);
+  if (cur && cur.disabled) { const ok = radios.find(r => !r.disabled); if (ok) ok.checked = true; }
+}
 function freeForOwner(date, time, owner, secName) {
   const sf = (CO.slotSec || {})[date + ' ' + time];   // 분야별 남은 자리(코치별 받을 분야 반영, 11-06)
   if (sf && secName && sf[secName] != null) return Number(sf[secName]) || 0;
@@ -524,7 +542,7 @@ async function viewCoach() {
   }
   if (d && !d.ok && d.error) { $('pane').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
   if (!d || !d.ok) { $('pane').innerHTML = `<div class="empty">불러오지 못했어요.</div>`; return; }
-  CO.sections = d.sections || []; CO.slotRoles = {}; CO.slotSec = {};
+  CO.sections = d.sections || []; CO.slotRoles = {}; CO.slotSec = {}; CO.slotMode = {};
   const mine = d.myBookings || [];
   // 주당 신청 제한 — 이미 신청한 주는 미리 회색으로
   CO.weekQuota = Number(d.weekQuota != null ? d.weekQuota : 1);
@@ -543,7 +561,7 @@ async function viewCoach() {
   let body = '';
   weeks.forEach(w => (w.days || []).forEach(day => {
     const slots = (day.slots || []).filter(s => s.state === 'open' || s.state === 'mine');
-    slots.forEach(s => { if (s.roles) CO.slotRoles[day.date + ' ' + s.time] = s.roles; if (s.secFree) CO.slotSec[day.date + ' ' + s.time] = s.secFree; });
+    slots.forEach(s => { if (s.roles) CO.slotRoles[day.date + ' ' + s.time] = s.roles; if (s.secFree) CO.slotSec[day.date + ' ' + s.time] = s.secFree; if (s.modeFree) CO.slotMode[day.date + ' ' + s.time] = s.modeFree; });
     if (!slots.length) return;
     any = true;
     body += `<div class="coDay"><div class="coDayHd">${dayLabel(day.date)}</div><div class="chips">` +
@@ -581,6 +599,7 @@ window.coApply = function (date, time) {
     <div class="row"><button class="btn ghost" onclick="closeSheet()">닫기</button>
       <button class="btn" id="coSend" onclick="coSubmit()">신청하기</button></div>`;
   sheet(h);
+  coApplyModes();
 };
 window.coPick = function (i) {
   const s = (CO.sections || [])[i]; if (!s) return;
@@ -599,6 +618,7 @@ window.coPick = function (i) {
     CO.topic = null;
   }
   $('coBox').innerHTML = h;
+  coApplyModes();
 };
 window.coSubmit = async function () {
   const btn = $('coSend'); if (btn.disabled) return;

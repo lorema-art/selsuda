@@ -116,7 +116,8 @@ window.home = async function () {
   $('main').innerHTML = `<div class="card"><label style="margin-top:0">사서함 코드 · 이름으로 찾기</label>
     <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
     <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p>
-    <button class="btn pink" onclick="findView()">📷 사진부터 찍기 (사서함 자동 찾기)</button></div>
+    <button class="btn pink" onclick="findView()">📷 사진부터 찍기 (사서함 자동 찾기)</button>
+    <button class="btn ghost" onclick="reportView()">📋 오늘 검수 점검 (빠진 것 찾기)</button></div>
     <div id="grp"><div class="muted">검수 대기 목록 불러오는 중…</div></div>`;
   const draw = (fresh) => {
     const g = $('grp'); if (!g || MODE || CODE) return;          // 다른 화면으로 갔으면 안 그림
@@ -128,6 +129,26 @@ window.home = async function () {
   let d; try { d = await loadAll(); } catch (e) { if (!ALL && $('grp')) $('grp').innerHTML = `<div class="warn">연결 오류예요. 잠시 뒤 다시 열어주세요.</div>`; return; }
   if (!d.ok) return pinView(d.error);
   draw(true);                                                   // 새 목록으로 바꾼다
+};
+// 📋 오늘 검수 점검(11-09) — 유통기한 빈칸·개수 다름·사진 없음·미등록 학생 미처리·오래된 검수대기
+window.reportView = async function (day) {
+  if (Q.length) toast('아직 저장 중인 검수가 ' + Q.length + '건 있어요 — 끝난 뒤 다시 눌러야 정확해요', 3500);
+  MODE = 'report'; CODE = ''; CUR = null; PH = []; aiCancel(); $('hdrBtn').classList.remove('hidden');
+  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><div class="muted">점검하는 중…</div>`;
+  let d; try { d = await call('inspReport', day ? { day } : {}); } catch (e) { if (MODE === 'report') $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><div class="warn">연결 오류예요.</div>`; return; }
+  if (MODE !== 'report') return;
+  if (!d.ok) { $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><div class="warn">${esc(d.error || '점검 실패')}${/inspReport|unknown|알 수 없/i.test(d.error || '') ? ' — 배송 두뇌 새 버전 배포가 필요해요' : ''}</div>`; return; }
+  const li = (x, extra) => `<div class="card" style="padding:8px 10px;margin:6px 0"><span class="mb">${esc(x.who.split(' ')[0])}</span>${esc(x.who.split(' ').slice(1).join(' '))}<br><b>${esc(x.product)}</b> · ${x.qty}개${extra ? ' · ' + extra : ''}${x.memo ? `<br><span class="muted">${esc(x.memo)}</span>` : ''}</div>`;
+  const sec = (t, list, f, ok) => `<h2 style="margin-top:14px">${t} <span class="cnt">${list.length}</span></h2>` + (list.length ? list.map(f).join('') : `<div class="muted">${ok || '없음 ✅'}</div>`);
+  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
+    <div class="card"><h2 style="margin:0">📋 ${esc(d.day)} 검수 점검</h2><div class="muted">오늘 검수 ${d.doneN}줄 · ${d.doneQty}개 · 아직 검수 대기 ${d.pendN}줄</div>
+      <div class="muted" style="margin-top:6px">고칠 게 있으면 강사님께 줄 번호로 알려주세요(시트 재고내역).</div></div>`
+    + sec('① 유통기한 빈칸', d.noExp, x => li(x, `재고내역 ${x.row}행`))
+    + sec('② 검수 개수 ≠ 등록 수량 (정정 안 함)', d.qtyOff, x => li(x, `등록 ${x.qty}개 · ${x.row}행`))
+    + (d.photoCol ? sec('③ 사진 없이 완료', d.noPhoto, x => li(x, `${x.row}행`)) : '')
+    + sec('④ 미등록으로 보냈는데 학생이 아직 등록 안 함', d.unreg.filter(u => !u.registered), u => `<div class="card" style="padding:8px 10px;margin:6px 0">${esc(u.at)} · ${esc(u.who)}<br><b>${esc(u.product)}</b>${u.qty ? ' · ' + u.qty + '개' : ''}</div>`)
+    + sec('⑤ 등록 3일 넘었는데 검수 안 된 입고', d.stale, x => li(x, `등록 ${esc(x.at)} (${x.age}일)`), '없음 ✅')
+    + (d.staleN > d.stale.length ? `<div class="muted">…외 ${d.staleN - d.stale.length}건 (시트 메뉴 '📋 오늘 검수 점검'에서 전체 보기)</div>` : '');
 };
 window.openCode = async function (q) {
   q = String(q || '').trim(); if (!q) return;
@@ -277,14 +298,34 @@ async function qRun() {
 }
 window.qRetry = function () { Q.forEach(x => { x.err = ''; }); qBar(); qRun(); };
 window.addEventListener('beforeunload', e => { if (Q.length) { e.preventDefault(); e.returnValue = ''; } });
-window.done = function () {
+// 11-09 점검: AI가 5초 기다리는 사이 [검수 완료]를 누르면 유통기한이 빈 채로 저장되던 문제 →
+//  빈 칸이 있고 아직 안 읽은 사진이 있으면 AI가 다 읽을 때까지 기다렸다가, 그래도 비면 한 번 물어본다.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let DONE_BUSY = false;
+window.done = async function () {
+  if (DONE_BUSY) return;
+  const it = CUR; if (!it) return;
   aiCancel();
-  const c = $('cnt').value;
   if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) return;
-  const it = CUR;
+  if (AI && PH.length && (!$('exp').value.trim() || $('cnt').value === '') && (AIRUN || PH.length !== AIREAD_N)) {
+    DONE_BUSY = true; const b = $('doneBtn'); if (b) { b.disabled = true; b.textContent = '🤖 AI가 읽는 중… 잠시만요'; }
+    try { if (!AIRUN) await aiNow(); for (let k = 0; AIRUN && k < 120; k++) await sleep(250); }
+    finally { DONE_BUSY = false; if (b) { b.disabled = false; b.textContent = '✅ 검수 완료'; } }
+    if (CUR !== it || !$('exp')) return;                   // 그사이 다른 화면으로 감
+    toast('🤖 AI가 읽었어요 — 값을 눈으로 확인하고 다시 [검수 완료]를 눌러주세요', 3500); return;
+  }
+  // 11-09 점검: 하루 105줄 중 68줄이 유통기한 빈칸(가전·칫솔 같은 '원래 없는 것'과 '깜빡한 것'이 섞여 구분 불가) →
+  //  빈칸이면 꼭 한 번 묻고, '표시 없음'을 고르면 메모에 남겨 점검 목록에서 빠지게 한다.
+  let noExpTag = '';
+  if (!$('exp').value.trim()) {
+    if (!confirm('유통기한이 비어 있어요.\n\n이 상품에 유통기한 표시가 아예 없나요? (가전·칫솔·화장솜 등)\n[확인] = 표시 없음으로 완료\n[취소] = 돌아가서 유통기한 넣기')) { $('exp').focus(); return; }
+    noExpTag = '유통기한 표시 없음';
+  }
+  if ($('cnt').value === '' && !confirm('개수를 안 넣었어요. 등록 수량 그대로 검수 완료할까요?')) { $('cnt').focus(); return; }
+  const c = $('cnt').value;
   Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product, err: '',
     body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: NOMB, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
-            fixQty: !!($('fix') && $('fix').checked), note: $('note').value.trim(), photos: PH.map(p => p.big) } });
+            fixQty: !!($('fix') && $('fix').checked), note: [noExpTag, $('note').value.trim()].filter(Boolean).join(' / '), photos: PH.map(p => p.big) } });
   qBar(); qRun();
   dropItem(it); PH = [];
   toast('검수 완료 ✅ 뒤에서 저장할게요');

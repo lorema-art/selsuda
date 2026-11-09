@@ -49,6 +49,14 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const store = { get(k) { try { return localStorage.getItem(k) || ''; } catch (_) { return ''; } }, set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (_) {} } };
 let PIN = store.get('insp_pin'), AI = false, GROUPS = [], ITEMS = [], CODE = '', CUR = null, PH = [];
+// 속도(11-09): 첫 화면에서 검수 대기 전부(ALL)를 한 번에 받아 두고, 사서함을 누르면 폰에서 바로 거른다(서버 왕복 없음)
+let ALL = null, MODE = '', FIND = null;
+function matchQ(it, q) { q = String(q || '').toUpperCase().replace(/\s+/g, ''); const code = String(it.mb || '').toUpperCase();
+  return code === q || (code + '|' + it.name + '|' + it.nick).toUpperCase().replace(/\s+/g, '').indexOf(q) >= 0; }
+function groupsOf(list) { const g = {}; list.forEach(it => { const k = it.mb || ('(' + it.name + ')'); g[k] = g[k] || { mb: it.mb, name: it.name, n: 0 }; g[k].n++; });
+  return Object.values(g).sort((a, b) => String(a.mb || 'zz').localeCompare(String(b.mb || 'zz'))); }
+async function loadAll() { const d = await call('inspList', { all: 1 }); if (d.ok) { ALL = d.items || []; AI = !!d.aiReady; GROUPS = d.groups || groupsOf(ALL); } return d; }
+function dropItem(it) { if (ALL && it) { ALL = ALL.filter(x => x.row !== it.row); GROUPS = groupsOf(ALL); } }
 function toast(t, ms) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), ms || 2500); }
 async function call(action, extra) {
   const res = await fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action, pin: PIN }, extra || {})) });
@@ -85,14 +93,14 @@ window.savePin = function () { PIN = $('pin').value.trim(); if (!PIN) return; st
 // ── 사서함 목록 ──
 window.home = async function () {
   if (!PIN) return pinView();
-  CODE = ''; CUR = null; $('hdrBtn').classList.add('hidden');
+  CODE = ''; CUR = null; MODE = ''; PH = []; $('hdrBtn').classList.add('hidden');
   $('main').innerHTML = `<div class="card"><label style="margin-top:0">사서함 코드 · 이름으로 찾기</label>
     <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
-    <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p></div>
+    <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p>
+    <button class="btn pink" onclick="findView()">📷 사진부터 찍기 (사서함 자동 찾기)</button></div>
     <div id="grp"><div class="muted">검수 대기 목록 불러오는 중…</div></div>`;
-  let d; try { d = await call('inspList', {}); } catch (e) { $('grp').innerHTML = `<div class="warn">연결 오류예요. 잠시 뒤 다시 열어주세요.</div>`; return; }
+  let d; try { d = await loadAll(); } catch (e) { $('grp').innerHTML = `<div class="warn">연결 오류예요. 잠시 뒤 다시 열어주세요.</div>`; return; }
   if (!d.ok) return pinView(d.error);
-  AI = !!d.aiReady; GROUPS = d.groups || [];
   $('grp').innerHTML = `<h2>검수 대기 ${GROUPS.reduce((a, g) => a + g.n, 0)}건 · ${GROUPS.length}명</h2>` + (GROUPS.length ? GROUPS.map(g =>
     `<div class="card item grp" onclick="openCode('${esc(g.mb || g.name)}')"><span><span class="mb">${esc(g.mb || '번호없음')}</span>${esc(g.name)}</span><span class="cnt">${g.n}</span></div>`).join('')
     : `<div class="card muted">검수 대기 중인 입고가 없어요 🎉</div>`);
@@ -100,10 +108,13 @@ window.home = async function () {
 window.openCode = async function (q) {
   q = String(q || '').trim(); if (!q) return;
   CODE = q; $('hdrBtn').classList.remove('hidden');
-  $('main').innerHTML = `<div class="muted">불러오는 중…</div>`;
-  let d; try { d = await call('inspList', { q }); } catch (e) { $('main').innerHTML = `<div class="warn">연결 오류예요.</div>`; return; }
-  if (!d.ok) return pinView(d.error);
-  AI = !!d.aiReady; ITEMS = d.items || [];
+  if (ALL) ITEMS = ALL.filter(it => matchQ(it, q));          // 바로 거르기(서버 안 감)
+  else {
+    $('main').innerHTML = `<div class="muted">불러오는 중…</div>`;
+    let d; try { d = await call('inspList', { q }); } catch (e) { $('main').innerHTML = `<div class="warn">연결 오류예요.</div>`; return; }
+    if (!d.ok) return pinView(d.error);
+    AI = !!d.aiReady; ITEMS = d.items || [];
+  }
   const who = ITEMS[0] ? `<span class="mb">${esc(ITEMS[0].mb || '')}</span>${esc(ITEMS[0].name)}` : esc(q);
   $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><h2>${who} · 검수 대기 ${ITEMS.length}건</h2>` +
     (ITEMS.length ? ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})">
@@ -123,7 +134,7 @@ function photoBlock() {
     <div class="thumbs" id="thumbs"></div><div id="aiBox"></div>`;
 }
 window.openItem = function (i) {
-  CUR = ITEMS[i]; PH = [];
+  const keep = MODE === 'find' && PH.length; CUR = ITEMS[i]; if (!keep) PH = []; MODE = '';
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
     <div class="card"><span class="mb">${esc(CUR.mb)}</span>${esc(CUR.name)}<h2 style="margin-top:8px">${esc(CUR.product)}${CUR.option ? ' · ' + esc(CUR.option) : ''}</h2>
       <div class="muted">수강생 등록 수량 <b>${CUR.qty}개</b>${CUR.site ? ' · ' + esc(CUR.site) : ''}</div>
@@ -136,6 +147,12 @@ window.openItem = function (i) {
       <label>메모 (선택)</label><input id="note" placeholder="파손·포장상태 등">
       <button class="btn ok" id="doneBtn" onclick="done()">✅ 검수 완료</button>
     </div>`;
+  if (keep) {                                                // 📷 사진부터 찍은 경우: 사진·AI 값 이어받기
+    $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
+    if (FIND && FIND.expiry && !$('exp').value) $('exp').value = FIND.expiry;
+    if (FIND && FIND.count != null) { $('cnt').value = FIND.count; qtyCheck(); }
+    if (FIND) $('aiBox').innerHTML = `<div class="ai">🤖 유통기한 <b>${esc(FIND.expiry || '못 찾음')}</b> · 개수 <b>${FIND.count == null ? '못 셈' : FIND.count + '개'}</b><br><span class="muted">AI가 읽은 값이에요. 맞는지 눈으로 확인해 주세요.</span></div>`;
+  }
 };
 window.qtyCheck = function () {
   const c = Number($('cnt').value), box = $('qtyBox');
@@ -149,6 +166,7 @@ window.addPhotos = async function (files) {
   for (const f of list) { try { PH.push({ big: await shrink(f, 1600), ai: await shrink(f, 1280) }); } catch (e) { toast(e.message); } }
   $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
   $('ph').value = '';
+  if (MODE === 'find') return findRead();
   if (!AI) { $('aiBox').innerHTML = `<div class="muted" style="margin-top:6px">AI 자동 읽기가 꺼져 있어요(키 없음). 유통기한을 직접 넣어주세요.</div>`; return; }
   $('aiBox').innerHTML = `<div class="ai">🤖 사진에서 유통기한·개수 읽는 중…</div>`;
   let d;
@@ -172,13 +190,60 @@ window.done = async function () {
   catch (e) { d = { ok: false, error: '연결 오류 — 시트에 들어갔는지 목록을 새로 열어 확인해 주세요.' }; }
   if (!d.ok) { alert(d.error || '저장하지 못했어요'); b.disabled = false; b.textContent = '✅ 검수 완료'; return; }
   toast('검수 완료 ✅' + (d.photos ? ` (사진 ${d.photos}장)` : ''));
+  dropItem(CUR); loadAll().catch(() => {});                 // 화면은 바로, 목록은 뒤에서 새로
   openCode(CODE);
+};
+
+// ── 📷 사진부터 찍기 (11-09 루크) — 사진을 먼저 넣으면 AI가 송장·주소의 사서함 코드를 읽어 그 학생 입고를 띄운다.
+//    못 읽거나 틀리면 아래 사서함 버튼에서 직접 고른다.
+window.findView = function () {
+  MODE = 'find'; PH = []; FIND = null; CUR = null; $('hdrBtn').classList.remove('hidden');
+  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
+    <div class="card"><h2>📷 사진부터 찍기</h2>
+      <p class="muted">송장(주소 라벨)과 상품이 함께 보이게 찍어주세요. AI가 <b>사서함 번호</b>·유통기한·개수를 읽어요.</p>
+      ${photoBlock()}</div><div id="findBox"></div>`;
+  if (!ALL) loadAll().catch(() => {});
+  findPick();
+};
+async function findRead() {
+  $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
+  if (!AI) { $('aiBox').innerHTML = `<div class="muted" style="margin-top:6px">AI 자동 읽기가 꺼져 있어요. 아래에서 사서함을 골라주세요.</div>`; return; }
+  $('aiBox').innerHTML = `<div class="ai">🤖 사서함 번호·유통기한 읽는 중…</div>`;
+  let d;
+  try { d = await call('inspRead', { find: 1, images: PH.slice(-3).map(p => p.ai) }); }
+  catch (e) { $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 아래에서 사서함을 골라주세요.</div>`; return; }
+  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 아래에서 사서함을 골라주세요.</div>`; return; }
+  FIND = d;
+  $('aiBox').innerHTML = `<div class="ai">🤖 사서함 <b>${esc(d.mb || (d.mbRaw ? d.mbRaw + ' (명부에 없음)' : '못 찾음'))}</b>${d.name ? ' ' + esc(d.name) : ''}
+    ${d.product ? `<br>상품 ${esc(d.product)}` : ''}<br>유통기한 <b>${esc(d.expiry || '못 찾음')}</b> · 개수 <b>${d.count == null ? '못 셈' : d.count + '개'}</b>
+    ${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}</div>`;
+  findPick(d.mb);
+}
+// 사서함 고르기: 읽은 코드가 있으면 그 학생 대기 입고를 바로, 없으면 대기 사서함 버튼 목록
+window.findPick = function (code) {
+  const box = $('findBox'); if (!box) return;
+  if (!ALL) { box.innerHTML = `<div class="muted">검수 대기 목록 불러오는 중…</div>`; loadAll().then(() => findPick(code)).catch(() => {}); return; }
+  if (code) {
+    CODE = code; ITEMS = ALL.filter(it => matchQ(it, code));
+    box.innerHTML = `<h2><span class="mb">${esc(code)}</span>${esc((ITEMS[0] && ITEMS[0].name) || (FIND && FIND.name) || '')} · 검수 대기 ${ITEMS.length}건</h2>` +
+      ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})"><b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
+        <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}</span>
+        ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)}</div>` : ''}</div>`).join('') +
+      (ITEMS.length ? '' : `<div class="card muted">이 사서함은 검수 대기 입고가 없어요. 수강생이 등록을 안 했다면 아래 버튼으로 사진을 보내주세요.</div>`) +
+      `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>
+       <button class="btn ghost" onclick="findPick('')">↺ 다른 사서함 고르기</button>`;
+    return;
+  }
+  box.innerHTML = `<div class="card"><label style="margin-top:0">사서함 직접 고르기</label>
+      <div class="row"><input id="fq" placeholder="예: B009, 가050, 이름" autocapitalize="characters" onkeydown="if(event.key==='Enter')findPick(this.value.trim().toUpperCase())">
+      <button class="btn" style="flex:0 0 76px;margin:0" onclick="findPick($('fq').value.trim().toUpperCase())">고르기</button></div></div>` +
+    GROUPS.map(g => `<div class="card item grp" onclick="findPick('${esc(g.mb || g.name)}')"><span><span class="mb">${esc(g.mb || '번호없음')}</span>${esc(g.name)}</span><span class="cnt">${g.n}</span></div>`).join('');
 };
 
 // ── 미등록 입고 ──
 window.unregView = function () {
-  CUR = null; PH = [];
-  const mb = (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
+  const keep = MODE === 'find' && PH.length; CUR = null; if (!keep) PH = []; MODE = '';
+  const mb = (FIND && keep && FIND.mb) || (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
     <div class="card"><h2>📦 등록 안 된 물건</h2>
       <p class="muted">수강생이 입고 등록을 안 하고 보낸 물건이에요. 사진을 찍어 보내면 그 수강생 앱에 사진과 함께 <b>"직접 입고 등록해 주세요"</b> 안내가 자동으로 가요.<br>재고내역에는 넣지 않아요. 수강생이 등록하면 평소처럼 검수 목록에 떠요.</p>
@@ -190,6 +255,10 @@ window.unregView = function () {
       <label>유통기한</label><input id="uExp" placeholder="예: 2027-05-31">
       <label>수강생에게 남길 말 (선택)</label><input id="uNote" placeholder="예: 박스 1개 도착">
       <button class="btn pink" id="uBtn" onclick="unregSave()">📤 수강생에게 사진 보내기</button></div>`;
+  if (keep) {
+    $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
+    if (FIND) { if (FIND.product) $('uProd').value = FIND.product; if (FIND.count != null) $('uQty').value = FIND.count; if (FIND.expiry) $('uExp').value = FIND.expiry; }
+  }
 };
 window.unregSave = async function () {
   if (!PH.length) { alert('사진을 1장 이상 찍어주세요 (수강생에게 보내져요)'); return; }

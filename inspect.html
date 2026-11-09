@@ -31,6 +31,7 @@
   .thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; } .thumbs img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; z-index:20; max-width:90%; }
   .hidden { display:none !important; }
+  button.mini { border:1px solid #9bd3ae; background:#fff; color:#14532d; border-radius:6px; padding:1px 8px; font-size:12px; margin-left:4px; }
   .qbar { position:sticky; top:52px; z-index:4; background:#fff8db; color:#7a5b00; border-bottom:1px solid #f1df9c; padding:8px 16px; font-size:13px; }
   .qbar.bad { background:#ffe3e3; color:#a61e1e; border-color:#ffc9c9; }
   .qbar button { margin-left:6px; border:0; border-radius:6px; background:#a61e1e; color:#fff; padding:3px 9px; font-size:12px; }
@@ -83,14 +84,14 @@ async function call(action, extra) {
   return d;
 }
 // 사진 줄이기 — 저장용 1600px, AI용 1280px (JPEG)
-function shrink(file, max) {
+function shrink(file, max, q) {
   return new Promise((ok, no) => {
     const img = new Image(), u = URL.createObjectURL(file);
     img.onload = () => {
       const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u);
-      ok(c.toDataURL('image/jpeg', 0.78));
+      ok(c.toDataURL('image/jpeg', q || 0.78));
     };
     img.onerror = () => { URL.revokeObjectURL(u); no(new Error('사진을 읽지 못했어요')); };
     img.src = u;
@@ -111,7 +112,7 @@ window.savePin = function () { PIN = $('pin').value.trim(); if (!PIN) return; st
 // ── 사서함 목록 ──
 window.home = async function () {
   if (!PIN) return pinView();
-  CODE = ''; CUR = null; MODE = ''; PH = []; $('hdrBtn').classList.add('hidden');
+  CODE = ''; CUR = null; MODE = ''; PH = []; aiCancel(); $('hdrBtn').classList.add('hidden');
   $('main').innerHTML = `<div class="card"><label style="margin-top:0">사서함 코드 · 이름으로 찾기</label>
     <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
     <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p>
@@ -157,7 +158,8 @@ function photoBlock() {
     <div class="thumbs" id="thumbs"></div><div id="aiBox"></div>`;
 }
 window.openItem = function (i) {
-  const keep = MODE === 'find' && PH.length; CUR = ITEMS[i]; if (!keep) PH = []; MODE = '';
+  const keep = MODE === 'find' && PH.length; CUR = ITEMS[i]; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; } MODE = '';
+  NOMB = !!(keep && FIND && FIND.noMb);
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
     <div class="card"><span class="mb">${esc(CUR.mb)}</span>${esc(CUR.name)}<h2 style="margin-top:8px">${esc(CUR.product)}${CUR.option ? ' · ' + esc(CUR.option) : ''}</h2>
       <div class="muted">수강생 등록 수량 <b>${CUR.qty}개</b>${CUR.site ? ' · ' + esc(CUR.site) : ''}</div>
@@ -171,10 +173,10 @@ window.openItem = function (i) {
       <button class="btn ok" id="doneBtn" onclick="done()">✅ 검수 완료</button>
     </div>`;
   if (keep) {                                                // 📷 사진부터 찍은 경우: 사진·AI 값 이어받기
-    $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
-    if (FIND && FIND.expiry && !$('exp').value) $('exp').value = FIND.expiry;
-    if (FIND && FIND.count != null) { $('cnt').value = FIND.count; qtyCheck(); }
-    if (FIND) $('aiBox').innerHTML = `<div class="ai">🤖 유통기한 <b>${esc(FIND.expiry || '못 찾음')}</b> · 개수 <b>${FIND.count == null ? '못 셈' : FIND.count + '개'}</b><br><span class="muted">AI가 읽은 값이에요. 맞는지 눈으로 확인해 주세요.</span></div>`;
+    $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
+    if (FIND) { aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
+    else if (AIRUN) $('aiBox').innerHTML = `<div class="ai">🤖 사진 읽는 중… 끝나면 칸에 채워요</div>`;
+    else aiNow();                                            // 아직 안 읽었으면 상품을 누른 지금 한 번에 읽기
   }
 };
 window.qtyCheck = function () {
@@ -184,25 +186,71 @@ window.qtyCheck = function () {
     ? `<div class="warn">등록 ${CUR.qty}개와 달라요.<label class="chk"><input type="checkbox" id="fix"> 재고 수량을 실제 개수(${c}개)로 고치기</label>
        <span class="muted">체크 안 하면 수량은 그대로 두고 메모에만 남겨요.</span></div>` : '';
 };
+// 🤖 AI가 읽은 값 — '확실'할 때만 칸에 자동으로 넣고, 애매하면 제안만 보여주고 [넣기]로 사람이 고른다(11-09 정확도)
+let LAST_AI = null, NOMB = false;
+function aiFill(d) {
+  LAST_AI = d;
+  const ex = $('exp') || $('uExp'), cn = $('cnt') || $('uQty');
+  if (d.expirySure && d.expiry && ex) ex.value = d.expiry;
+  if (d.countSure && d.count != null && cn) { cn.value = d.count; if ($('cnt')) qtyCheck(); }
+}
+function aiHtml(d) {
+  const e = d.expiry
+    ? (d.expirySure ? `유통기한 <b>${esc(d.expiry)}</b>${d.expiryText ? ` (사진: ${esc(d.expiryText)})` : ''} ✔ 넣었어요`
+                    : `유통기한 <b>${esc(d.expiry)}</b>?${d.expiryText ? ` (사진: ${esc(d.expiryText)})` : ''} <span class="muted">확실하지 않아요</span> <button type="button" class="mini" onclick="aiApply('e')">넣기</button>`)
+    : `유통기한 <b>못 찾음</b> — 직접 넣어주세요`;
+  const c = d.count != null
+    ? (d.countSure ? `개수 <b>${d.count}개</b> ✔ 넣었어요`
+                   : `개수 <b>${d.count}개</b>? <span class="muted">확실하지 않아요</span> <button type="button" class="mini" onclick="aiApply('c')">넣기</button>`)
+    : `개수 <b>못 셈</b> — 직접 세어 주세요`;
+  return `<div class="ai">🤖 ${e}<br>${c}${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}<br><span class="muted">AI 값은 꼭 눈으로 확인해 주세요.</span></div>`;
+}
+window.aiApply = function (w) {
+  const d = LAST_AI; if (!d) return;
+  const ex = $('exp') || $('uExp'), cn = $('cnt') || $('uQty');
+  if (w === 'e' && ex) ex.value = d.expiry || '';
+  if (w === 'c' && cn && d.count != null) { cn.value = d.count; if ($('cnt')) qtyCheck(); }
+};
+// 💰 AI는 한 박스에 한 번만 읽는다(11-09 루크 "1장씩 읽지 말고 자동으로") —
+//   사진을 넣을 때마다 읽지 않고, ①3장이 되면 바로 ②더 안 찍고 5초 지나면 ③입고 상품을 누르면 그때 한 번에 읽는다.
+//   검수 완료를 먼저 누르면 읽지 않는다(비용 0). 읽는 중에 사진을 더 넣으면 끝난 뒤 한 번 더 읽는다.
+let AITIMER = null, AIKIND = 'item', AIREAD_N = 0, AIRUN = false;
+const AI_WAIT_MS = 5000, AI_MAX_PH = 4;
+function aiCancel() { if (AITIMER) { clearTimeout(AITIMER); AITIMER = null; } }
+function aiSchedule() {
+  aiCancel();
+  if (!PH.length || PH.length === AIREAD_N) return;
+  if (!AI) { $('aiBox').innerHTML = `<div class="muted" style="margin-top:6px">AI 자동 읽기가 꺼져 있어요(키 없음). 직접 넣어주세요.</div>`; return; }
+  if (PH.length >= 3) return aiNow();
+  $('aiBox').innerHTML = `<div class="ai">📷 ${PH.length}장 — 더 찍으셔도 돼요. 3장이 되거나 5초 뒤에 AI가 한 번에 읽어요.</div>`;
+  AITIMER = setTimeout(aiNow, AI_WAIT_MS);
+}
+window.aiNow = async function () {
+  aiCancel();
+  if (!PH.length || PH.length === AIREAD_N || AIRUN || !AI) return;
+  AIREAD_N = PH.length; AIRUN = true;
+  try { if (AIKIND === 'find') await findRead(); else await itemRead(); }
+  finally { AIRUN = false; if (PH.length && PH.length !== AIREAD_N && $('aiBox')) aiSchedule(); }
+};
 window.addPhotos = async function (files) {
   const list = Array.from(files || []); if (!list.length) return;
-  for (const f of list) { try { const im = await shrink(f, 1280); PH.push({ big: im, ai: im }); } catch (e) { toast(e.message); } }   // 속도(11-09): 1장으로(저장·AI 같은 1280px)
-  $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
+  for (const f of list) { try { PH.push({ big: await shrink(f, 1280), ai: await shrink(f, 1568, 0.86) }); } catch (e) { toast(e.message); } }   // 저장 1280px · AI 1568px(작은 날짜 글씨용, 11-09)
+  $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
   $('ph').value = '';
-  if (MODE === 'find') return findRead();
-  if (!AI) { $('aiBox').innerHTML = `<div class="muted" style="margin-top:6px">AI 자동 읽기가 꺼져 있어요(키 없음). 유통기한을 직접 넣어주세요.</div>`; return; }
-  $('aiBox').innerHTML = `<div class="ai">🤖 사진에서 유통기한·개수 읽는 중…</div>`;
-  let d;
-  try { d = await call('inspRead', { images: PH.slice(-3).map(p => p.ai), product: CUR ? CUR.product : ($('uProd') || {}).value, option: CUR ? CUR.option : '', qty: CUR ? CUR.qty : Number(($('uQty') || {}).value || 0) }); }
-  catch (e) { $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 넣어주세요.</div>`; return; }
-  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 넣어주세요.</div>`; return; }
-  const ex = $('exp') || $('uExp'), cn = $('cnt') || $('uQty');
-  if (d.expiry && ex) ex.value = d.expiry;
-  if (d.count != null && cn) { cn.value = d.count; if ($('cnt')) qtyCheck(); }
-  $('aiBox').innerHTML = `<div class="ai">🤖 유통기한 <b>${esc(d.expiry || '못 찾음')}</b>${d.expiryText ? ` (사진: ${esc(d.expiryText)})` : ''} · 개수 <b>${d.count == null ? '못 셈' : d.count + '개'}</b>
-      ${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}<br><span class="muted">AI가 읽은 값이에요. 맞는지 눈으로 확인해 주세요.</span></div>`
-    + (d.sameProduct === false ? `<div class="warn">⚠ AI가 보기엔 등록 상품과 다른 물건 같아요. 상품을 다시 확인해 주세요.</div>` : '');
+  aiSchedule();
 };
+async function itemRead() {
+  if (!$('aiBox')) return;
+  $('aiBox').innerHTML = `<div class="ai">🤖 사진 ${Math.min(PH.length, AI_MAX_PH)}장에서 유통기한·개수 읽는 중…</div>`;
+  let d;
+  try { d = await call('inspRead', { images: PH.slice(0, AI_MAX_PH).map(p => p.ai), product: CUR ? CUR.product : ($('uProd') || {}).value, option: CUR ? CUR.option : '', qty: CUR ? CUR.qty : Number(($('uQty') || {}).value || 0) }); }
+  catch (e) { if ($('aiBox')) $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 넣어주세요.</div>`; return; }
+  if (!$('aiBox')) return;                                   // 그사이 다른 화면으로 감
+  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 넣어주세요.</div>`; return; }
+  aiFill(d);
+  $('aiBox').innerHTML = aiHtml(d)
+    + (d.sameProduct === false ? `<div class="warn">⚠ AI가 보기엔 등록 상품과 다른 물건 같아요. 상품을 다시 확인해 주세요.</div>` : '');
+}
 // ⚡ 검수 완료는 '뒤에서 저장'(11-09 루크 "저장 중이 너무 오래 걸려") — 누르면 바로 다음 물건으로 가고,
 //    저장은 순서대로 뒤에서 한다. 위 띠에 '저장 중 N건'이 보이고, 실패하면 빨간 띠에서 다시 저장할 수 있다.
 let Q = [], Q_RUN = false;
@@ -230,11 +278,12 @@ async function qRun() {
 window.qRetry = function () { Q.forEach(x => { x.err = ''; }); qBar(); qRun(); };
 window.addEventListener('beforeunload', e => { if (Q.length) { e.preventDefault(); e.returnValue = ''; } });
 window.done = function () {
+  aiCancel();
   const c = $('cnt').value;
   if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) return;
   const it = CUR;
   Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product, err: '',
-    body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
+    body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: NOMB, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
             fixQty: !!($('fix') && $('fix').checked), note: $('note').value.trim(), photos: PH.map(p => p.big) } });
   qBar(); qRun();
   dropItem(it); PH = [];
@@ -245,7 +294,7 @@ window.done = function () {
 // ── 📷 사진부터 찍기 (11-09 루크) — 사진을 먼저 넣으면 AI가 송장·주소의 사서함 코드를 읽어 그 학생 입고를 띄운다.
 //    못 읽거나 틀리면 아래 사서함 버튼에서 직접 고른다.
 window.findView = function () {
-  MODE = 'find'; PH = []; FIND = null; CUR = null; $('hdrBtn').classList.remove('hidden');
+  MODE = 'find'; PH = []; FIND = null; CUR = null; aiCancel(); AIKIND = 'find'; AIREAD_N = 0; $('hdrBtn').classList.remove('hidden');
   $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
     <div class="card"><h2>📷 사진부터 찍기</h2>
       <p class="muted">송장(주소 라벨)과 상품이 함께 보이게 찍어주세요. AI가 <b>사서함 번호</b>·유통기한·개수를 읽어요.</p>
@@ -256,17 +305,34 @@ window.findView = function () {
   loadAll().then(d => { if (d && d.ok && MODE === 'find' && $('findBox') && !($('fq') && $('fq').value)) findPick(CODE || (FIND && FIND.mb) || ''); }).catch(() => {});
 };
 async function findRead() {
-  $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
-  $('aiBox').innerHTML = `<div class="ai">🤖 사서함 번호·유통기한 읽는 중…</div>`;
+  if (!$('aiBox')) return;
+  $('aiBox').innerHTML = `<div class="ai">🤖 사진 ${Math.min(PH.length, AI_MAX_PH)}장에서 사서함 번호·유통기한 읽는 중…</div>`;
   let d;
-  try { d = await call('inspRead', { find: 1, images: PH.slice(-3).map(p => p.ai) }); }
-  catch (e) { $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 아래에서 사서함을 골라주세요.</div>`; return; }
-  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 아래에서 사서함을 골라주세요.</div>`; return; }
+  try { d = await call('inspRead', { find: 1, images: PH.slice(0, AI_MAX_PH).map(p => p.ai) }); }
+  catch (e) { if ($('aiBox')) $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 골라·넣어주세요.</div>`; return; }
+  if (!$('aiBox')) return;
+  if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 골라·넣어주세요.</div>`; return; }
   FIND = d;
-  $('aiBox').innerHTML = `<div class="ai">🤖 사서함 <b>${esc(d.mb || (d.mbRaw ? d.mbRaw + ' (명부에 없음)' : '못 찾음'))}</b>${d.name ? ' ' + esc(d.name) : ''}
-    ${d.product ? `<br>상품 ${esc(d.product)}` : ''}<br>유통기한 <b>${esc(d.expiry || '못 찾음')}</b> · 개수 <b>${d.count == null ? '못 셈' : d.count + '개'}</b>
-    ${d.note ? `<br><span class="muted">${esc(d.note)}</span>` : ''}</div>`;
-  findPick(d.mb);
+  FIND.noMb = !!(d.labelSeen && !d.mbRaw);            // 송장은 보이는데 사서함 번호가 안 적힘 → 검수 후 수강생에게 안내
+  if (MODE !== 'find') {                                // 읽는 사이 상품(또는 미등록)을 먼저 눌렀으면 → 그 화면 칸에 바로 채움
+    NOMB = FIND.noMb; aiFill(d);
+    $('aiBox').innerHTML = (FIND.noMb ? `<div class="warn">📮 송장에 사서함 번호가 없어요 — 검수를 마치면 수강생에게 "사서함 번호를 꼭 적어주세요" 안내가 가요(하루 1번).</div>` : '') + aiHtml(d);
+    if ($('uProd') && d.product && !$('uProd').value) $('uProd').value = d.product;
+    return;
+  }
+  const cands = d.cands || [];
+  let h = `<div class="ai">🤖 사서함 <b>${esc(d.mb || (d.mbRaw ? d.mbRaw + ' (명부에 없음)' : (d.labelSeen ? '송장에 없음' : '못 찾음')))}</b>${d.name ? ' ' + esc(d.name) : ''}
+    ${d.product ? `<br>상품 ${esc(d.product)}` : ''}</div>`;
+  if (!d.mb && (d.recvName || d.recvPhone)) {
+    h += `<div class="warn">📮 송장에 사서함 번호가 없어요. 받는 분 <b>${esc(d.recvName || '?')}</b> ${esc(d.recvPhone || '')}
+      ${cands.length ? '<br>이 수강생 아닌가요? 눌러서 고르세요.' : '<br>명부에서 비슷한 수강생을 못 찾았어요. 아래에서 직접 골라주세요.'}
+      ${cands.map(c => `<button type="button" class="btn ghost" style="margin-top:6px" onclick="findPick('${esc(c.mb || c.name)}')"><span class="mb">${esc(c.mb || '번호없음')}</span>${esc(c.name)} <span class="muted">(${esc(c.why)})</span></button>`).join('')}
+      ${FIND.noMb ? '<br><span class="muted">검수를 마치면 그 수강생에게 "사서함 번호를 꼭 적어주세요" 안내가 자동으로 가요(하루 1번).</span>' : ''}</div>`;
+  }
+  h += aiHtml(d);
+  LAST_AI = d;
+  $('aiBox').innerHTML = h;
+  findPick(d.mb || (cands.length === 1 && cands[0].score >= 5 ? (cands[0].mb || cands[0].name) : ''));
 }
 // 사서함 고르기: 읽은 코드가 있으면 그 학생 대기 입고를 바로, 없으면 대기 사서함 버튼 목록
 window.findPick = function (code) {
@@ -291,7 +357,8 @@ window.findPick = function (code) {
 
 // ── 미등록 입고 ──
 window.unregView = function () {
-  const keep = MODE === 'find' && PH.length; CUR = null; if (!keep) PH = []; MODE = '';
+  const keep = MODE === 'find' && PH.length; CUR = null; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; } MODE = '';
+  NOMB = !!(keep && FIND && FIND.noMb);
   const mb = (FIND && keep && FIND.mb) || (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
     <div class="card"><h2>📦 등록 안 된 물건</h2>
@@ -306,14 +373,17 @@ window.unregView = function () {
       <button class="btn pink" id="uBtn" onclick="unregSave()">📤 수강생에게 사진 보내기</button></div>`;
   if (keep) {
     $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
-    if (FIND) { if (FIND.product) $('uProd').value = FIND.product; if (FIND.count != null) $('uQty').value = FIND.count; if (FIND.expiry) $('uExp').value = FIND.expiry; }
+    $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
+    if (FIND) { if (FIND.product) $('uProd').value = FIND.product; aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
+    else if (AIRUN) $('aiBox').innerHTML = `<div class="ai">🤖 사진 읽는 중… 끝나면 칸에 채워요</div>`;
+    else aiNow();
   }
 };
 window.unregSave = async function () {
   if (!PH.length) { alert('사진을 1장 이상 찍어주세요 (수강생에게 보내져요)'); return; }
   const b = $('uBtn'); b.disabled = true; b.textContent = '보내는 중…';
   let d;
-  try { d = await call('inspAddUnreg', { mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
+  try { d = await call('inspAddUnreg', { noMbNotice: NOMB, mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
     expiry: $('uExp').value.trim(), note: $('uNote').value.trim(), photos: PH.map(p => p.big) }); }
   catch (e) { d = { ok: false, error: '연결 오류 — 보내졌는지 시트 「미등록입고」 탭을 확인해 주세요.' }; }
   if (!d.ok) { alert(d.error || '보내지 못했어요'); b.disabled = false; b.textContent = '📤 수강생에게 사진 보내기'; return; }

@@ -179,7 +179,7 @@ function photoBlock() {
     <div class="thumbs" id="thumbs"></div><div id="aiBox"></div>`;
 }
 window.openItem = function (i) {
-  const keep = MODE === 'find' && PH.length; CUR = ITEMS[i]; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; } MODE = '';
+  const keep = MODE === 'find' && PH.length; CUR = ITEMS[i]; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; LAST_AI = null; } MODE = '';
   NOMB = !!(keep && FIND && FIND.noMb);
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>
     <div class="card"><span class="mb">${esc(CUR.mb)}</span>${esc(CUR.name)}<h2 style="margin-top:8px">${esc(CUR.product)}${CUR.option ? ' · ' + esc(CUR.option) : ''}</h2>
@@ -317,6 +317,14 @@ window.done = async function () {
   // 11-09 점검: 하루 105줄 중 68줄이 유통기한 빈칸(가전·칫솔 같은 '원래 없는 것'과 '깜빡한 것'이 섞여 구분 불가) →
   //  빈칸이면 꼭 한 번 묻고, '표시 없음'을 고르면 메모에 남겨 점검 목록에서 빠지게 한다.
   let noExpTag = '';
+  // 11-09 3차(루크 "유통기한이 또렷한데 왜 못 땄어"): AI가 읽긴 했는데 '확실하지 않음'이라 칸을 비워둔 경우 → 그 값을 바로 제안
+  const sug = LAST_AI && LAST_AI.expiry && !LAST_AI.expirySure ? LAST_AI.expiry : '';
+  if (!$('exp').value.trim() && sug) {
+    if (confirm('AI가 유통기한을 ' + sug + (LAST_AI.expiryText ? ' (사진 글자: ' + LAST_AI.expiryText + ')' : '') + ' 로 읽었어요.\n확실하지 않아서 비워뒀어요.\n\n사진과 맞으면 [확인] = 이 값으로 넣기\n[취소] = 직접 확인하기')) {
+      $('exp').value = sug; toast('유통기한 ' + sug + ' 넣었어요 — 맞으면 [검수 완료]를 다시 눌러주세요', 3500); return;
+    }
+    $('exp').focus(); return;
+  }
   if (!$('exp').value.trim()) {
     if (!confirm('유통기한이 비어 있어요.\n\n이 상품에 유통기한 표시가 아예 없나요? (가전·칫솔·화장솜 등)\n[확인] = 표시 없음으로 완료\n[취소] = 돌아가서 유통기한 넣기')) { $('exp').focus(); return; }
     noExpTag = '유통기한 표시 없음';
@@ -398,7 +406,7 @@ window.findPick = function (code) {
 
 // ── 미등록 입고 ──
 window.unregView = function () {
-  const keep = MODE === 'find' && PH.length; CUR = null; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; } MODE = '';
+  const keep = MODE === 'find' && PH.length; CUR = null; if (!keep) { PH = []; aiCancel(); AIKIND = 'item'; AIREAD_N = 0; LAST_AI = null; } MODE = '';
   NOMB = !!(keep && FIND && FIND.noMb);
   const mb = (FIND && keep && FIND.mb) || (ITEMS[0] && ITEMS[0].mb) || (/^[A-Z가-힣]\d{3}$/i.test(CODE) ? CODE.toUpperCase() : '');
   $('main').innerHTML = `<button class="back" onclick="openCode(CODE)">← 목록으로</button>

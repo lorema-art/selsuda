@@ -146,7 +146,7 @@ window.reportView = async function (day) {
     + sec('① 유통기한 빈칸', d.noExp, x => li(x, `재고내역 ${x.row}행`))
     + sec('② 검수 개수 ≠ 등록 수량 (정정 안 함)', d.qtyOff, x => li(x, `등록 ${x.qty}개 · ${x.row}행`))
     + (d.photoCol ? sec('③ 사진 없이 완료', d.noPhoto, x => li(x, `${x.row}행`)) : '')
-    + sec('④ 미등록으로 보냈는데 학생이 아직 등록 안 함', d.unreg.filter(u => !u.registered), u => `<div class="card" style="padding:8px 10px;margin:6px 0">${esc(u.at)} · ${esc(u.who)}<br><b>${esc(u.product)}</b>${u.qty ? ' · ' + u.qty + '개' : ''}</div>`)
+    + sec('④ 미등록으로 보냈는데 학생이 아직 등록 안 함', d.unreg.filter(u => !u.registered), u => `<div class="card" style="padding:8px 10px;margin:6px 0">${esc(u.at)} · ${esc(u.who)}<br><b>${esc(u.product)}</b>${u.qty ? ' · ' + u.qty + '개' : ''}<br><span class="muted">${u.seen ? '👀 ' + esc(u.seen) + ' 학생 확인' : '학생 아직 안 읽음'}${u.rem ? ' · 재알림 ' + esc(u.rem) : ''}</span></div>`)
     + sec('⑤ 등록 3일 넘었는데 검수 안 된 입고', d.stale, x => li(x, `등록 ${esc(x.at)} (${x.age}일)`), '없음 ✅')
     + (d.staleN > d.stale.length ? `<div class="muted">…외 ${d.staleN - d.stale.length}건 (시트 메뉴 '📋 오늘 검수 점검'에서 전체 보기)</div>` : '');
 };

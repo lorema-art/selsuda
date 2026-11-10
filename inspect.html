@@ -75,6 +75,11 @@ function loadAll() {
   }).finally(() => { LOADING = null; });
   return LOADING;
 }
+// 일부 검수: 목록에서 빼지 않고 남은 개수만 줄여 둔다(서버도 원래 줄 수량을 남은 개수로 줄임)
+function keepPartial(it, n) {
+  it.qty = Math.max(0, it.qty - n); it.memo = (it.memo ? it.memo + ' / ' : '') + `일부 검수 ${n}개 — 남은 ${it.qty}개 대기`;
+  if (ALL) { const x = ALL.find(y => y.row === it.row); if (x && x !== it) { x.qty = it.qty; x.memo = it.memo; } GROUPS = groupsOf(ALL); store.set('insp_all', JSON.stringify({ t: Date.now(), items: ALL, ai: AI })); }
+}
 function dropItem(it) { if (ALL && it) { ALL = ALL.filter(x => x.row !== it.row); GROUPS = groupsOf(ALL); store.set('insp_all', JSON.stringify({ t: Date.now(), items: ALL, ai: AI })); } }
 function toast(t, ms) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), ms || 2500); }
 async function call(action, extra) {
@@ -203,9 +208,13 @@ window.openItem = function (i) {
 window.qtyCheck = function () {
   const c = Number($('cnt').value), box = $('qtyBox');
   if (!box) return;
-  box.innerHTML = (CUR && $('cnt').value !== '' && c !== CUR.qty)
-    ? `<div class="warn">등록 ${CUR.qty}개와 달라요.<label class="chk"><input type="checkbox" id="fix"> 재고 수량을 실제 개수(${c}개)로 고치기</label>
-       <span class="muted">체크 안 하면 수량은 그대로 두고 메모에만 남겨요.</span></div>` : '';
+  if (!(CUR && $('cnt').value !== '' && c !== CUR.qty)) { box.innerHTML = ''; return; }
+  // 📦 11-10 루크: 10개가 2개씩 박스로 나눠 오면 → '일부만 도착'으로 이번 개수만 검수, 나머지는 목록에 남김(기본 선택)
+  const part = c > 0 && c < CUR.qty;
+  box.innerHTML = `<div class="warn">등록 ${CUR.qty}개와 달라요.
+    ${part ? `<label class="chk"><input type="radio" name="qm" value="part" checked> 📦 <b>일부만 도착</b> — 이번 ${c}개만 검수, 남은 ${CUR.qty - c}개는 목록에 남기기</label>` : ''}
+    <label class="chk"><input type="radio" name="qm" value="fix"> 재고 수량을 실제 개수(${c}개)로 고치기</label>
+    <label class="chk"><input type="radio" name="qm" value="memo"${part ? '' : ' checked'}> 수량은 그대로 두고 메모에만 남기기</label></div>`;
 };
 // 🤖 AI가 읽은 값 — '확실'할 때만 칸에 자동으로 넣고, 애매하면 제안만 보여주고 [넣기]로 사람이 고른다(11-09 정확도)
 let LAST_AI = null, NOMB = false;
@@ -331,12 +340,14 @@ window.done = async function () {
   }
   if ($('cnt').value === '' && !confirm('개수를 안 넣었어요. 등록 수량 그대로 검수 완료할까요?')) { $('cnt').focus(); return; }
   const c = $('cnt').value;
-  Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product, err: '',
+  const qm = (document.querySelector('input[name="qm"]:checked') || {}).value || '';
+  const partial = qm === 'part' && c !== '' && Number(c) > 0 && Number(c) < it.qty;
+  Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product + (partial ? ` (일부 ${c}개)` : ''), err: '',
     body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: NOMB, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
-            fixQty: !!($('fix') && $('fix').checked), note: [noExpTag, $('note').value.trim()].filter(Boolean).join(' / '), photos: PH.map(p => p.big) } });
+            fixQty: qm === 'fix', partial, note: [noExpTag, $('note').value.trim()].filter(Boolean).join(' / '), photos: PH.map(p => p.big) } });
   qBar(); qRun();
-  dropItem(it); PH = [];
-  toast('검수 완료 ✅ 뒤에서 저장할게요');
+  if (partial) { keepPartial(it, Number(c)); PH = []; toast(`일부 검수 ✅ ${c}개 저장 — 남은 ${it.qty}개는 목록에 그대로 있어요`, 3500); }
+  else { dropItem(it); PH = []; toast('검수 완료 ✅ 뒤에서 저장할게요'); }
   openCode(CODE);
 };
 

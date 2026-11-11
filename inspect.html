@@ -197,6 +197,12 @@ window.openItem = function (i) {
       <div id="qtyBox"></div>
       <label>메모 (선택)</label><input id="note" placeholder="파손·포장상태 등">
       <button class="btn ok" id="doneBtn" onclick="done()">✅ 검수 완료</button>
+    </div>
+    <div class="card"><b>⚠ 문제가 있어요 — 수강생에게 반품 권장 안내 보내기</b>
+      <p class="muted" style="margin:6px 0">위에서 찍은 사진이 함께 가요. 이 입고는 검수 처리하지 않고 목록에 남아요(시트에 빨갛게 표시).</p>
+      <button type="button" class="btn ghost" onclick="issueSend('bundle')">📦 합포장(1+1 등) — 낱개 발송 어려움</button>
+      <label>실제 도착한 제품 (다른 제품일 때만)</label><input id="issueB" placeholder="예: OO 수분크림 50ml">
+      <button type="button" class="btn ghost" onclick="issueSend('wrong')">🔀 등록 상품과 다른 제품이 도착</button>
     </div>`;
   if (keep) {                                                // 📷 사진부터 찍은 경우: 사진·AI 값 이어받기
     $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
@@ -204,6 +210,28 @@ window.openItem = function (i) {
     else if (AIRUN) $('aiBox').innerHTML = `<div class="ai">🤖 사진 읽는 중… 끝나면 칸에 채워요</div>`;
     else aiNow();                                            // 아직 안 읽었으면 상품을 누른 지금 한 번에 읽기
   }
+};
+// ⚠ 합포장·다른 제품 → 수강생에게 사진+반품 권장 안내(11-11 루크). 바로 보내고 결과를 기다린다(검수 완료와 달리 뒤에서 저장 안 함).
+let ISSUE_BUSY = false;
+window.issueSend = async function (kind) {
+  const it = CUR; if (!it || ISSUE_BUSY) return;
+  if (!PH.length) { toast('사진을 먼저 찍어주세요 — 수강생에게 같이 보내져요', 3000); return; }
+  const B = (($('issueB') || {}).value || '').trim();
+  if (kind === 'wrong' && !B) { toast('실제 도착한 제품 이름을 적어주세요', 3000); $('issueB').focus(); return; }
+  const what = kind === 'bundle'
+    ? `📦 합포장 상품이라 발송이 어렵다`
+    : `🔀 등록 상품: ${it.product}\n   실제 도착: ${B}`;
+  if (!confirm(`${it.name || it.mb} 님에게 아래 안내를 사진 ${PH.length}장과 함께 보낼까요?\n\n${what}\n→ 공급처 반품을 권장드려요`)) return;
+  ISSUE_BUSY = true; toast('보내는 중…', 8000);
+  let d;
+  try { d = await call('inspIssue', { row: it.row, at: it.at, product: it.product, kind, actual: B, note: ($('note') || {}).value || '', photos: PH.map(p => p.big) }); }
+  catch (e) { d = { ok: false, error: '연결 오류' }; }
+  finally { ISSUE_BUSY = false; }
+  if (d && d.badPin) return pinView(d.error);
+  if (!d || !d.ok) { toast('⚠ 못 보냈어요: ' + ((d && d.error) || '오류'), 4000); return; }
+  it.memo = (it.memo ? it.memo + ' / ' : '') + '⚠ 반품 권장 안내 보냄';
+  PH = []; toast(`✅ ${d.name || ''} 님에게 안내 보냈어요 (사진 ${d.photos}장)`, 3500);
+  openCode(CODE);
 };
 window.qtyCheck = function () {
   const c = Number($('cnt').value), box = $('qtyBox');

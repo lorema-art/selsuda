@@ -830,7 +830,7 @@ function mDlApply(inv, ship, bal) {
   DL.srets = (inv && inv.stockReturns) || [];
   DL.notice = (inv && inv.notice) || '';
   DL.mb = (inv && inv.mailbox) || '';
-  DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
+  DL.ship = dlSortNewest((ship && ship.items) || [])   /* 취소건도 회색 '취소됨'으로 보여줌(11-11) */;
   DL.bal = bal && bal.ok ? bal : null;
 }
 function mDlBar(html) {
@@ -862,7 +862,7 @@ async function viewShip() {
     DL.srets = (inv && inv.stockReturns) || [];
     DL.notice = (inv && inv.notice) || '';
     DL.mb = (inv && inv.mailbox) || '';
-    DL.ship = dlSortNewest(((ship && ship.items) || []).filter(s => String(s.status || '').indexOf('취소') < 0));
+    DL.ship = dlSortNewest((ship && ship.items) || [])   /* 취소건도 회색 '취소됨'으로 보여줌(11-11) */;
     DL.bal = bal && bal.ok ? bal : null;
   } catch (_) { $('pane').innerHTML = `<div class="empty">연결에 실패했어요.</div>`; return; }
   if (!isDlTab()) return;   // 기다리는 사이 다른 탭으로 옮겼으면 덮어쓰지 않음
@@ -1586,34 +1586,25 @@ function paneShip() {
   }
   h += `<div class="sec">📋 내 배송요청</div>`;
   if (DL.ship.length) {
-    const cnt = (st) => DL.ship.filter(s => {
-      const x = String(s.status || '');
-      return st === 'wait' ? x.indexOf('접수') >= 0
-           : st === 'done' ? x.indexOf('발송') >= 0
-           : st === 'return' ? (x.indexOf('반품') >= 0 || !!s.ret) : true;
-    }).length;
+    const cnt = (st) => DL.ship.filter(s => dlShipIs(s, st)).length;
     h += `<div class="chips shipChips">
-      ${[['all','전체'],['wait','접수'],['done','발송완료'],['return','반품']].map(([k, t]) =>
+      ${[['all','전체'],['wait','접수'],['done','발송완료'],['return','반품']].concat(cnt('cancel') ? [['cancel','취소']] : []).map(([k, t]) =>
         `<button type="button" class="chip ${DL.shipTab === k ? 'on' : ''}" onclick="dlShipTab('${k}')">${t}<span class="cnt">${cnt(k)}</span></button>`).join('')}
     </div>`;
   }
-  const shown = DL.ship.filter(s => {
-    const x = String(s.status || ''), st = DL.shipTab || 'all';
-    return st === 'wait' ? x.indexOf('접수') >= 0
-         : st === 'done' ? x.indexOf('발송') >= 0
-         : st === 'return' ? (x.indexOf('반품') >= 0 || !!s.ret) : true;
-  });
+  const shown = DL.ship.filter(s => dlShipIs(s, DL.shipTab || 'all'));
   h += shown.length ? shown.map(s => {
     const st = String(s.status || '');
-    const k = st.indexOf('발송완료') >= 0 ? 'done' : (st.indexOf('반품') >= 0 ? 'ret' : 'wait');
-    return `<div class="item">
-      <div class="h"><span class="t">${esc(plainName(s.product))}${s.option ? ' · ' + esc(s.option) : ''} × ${s.qty}</span>
-        <span class="pill ${k}">${esc(st)}</span></div>
+    const isC = st.indexOf('취소') >= 0;
+    const k = isC ? 'cancel' : st.indexOf('발송완료') >= 0 ? 'done' : (st.indexOf('반품') >= 0 ? 'ret' : 'wait');
+    return `<div class="item"${isC ? ' style="opacity:.6;background:#f5f5f7"' : ''}>
+      <div class="h"><span class="t"${isC ? ' style="text-decoration:line-through"' : ''}>${esc(plainName(s.product))}${s.option ? ' · ' + esc(s.option) : ''} × ${s.qty}</span>
+        <span class="pill ${k}"${isC ? ' style="background:#eceef2;color:#7b8090"' : ''}>${isC ? '❌ 취소됨' : esc(st)}</span></div>
       <div class="m">${esc(s.receiver || '')} · ${esc(fmtDT(s.at))}
         ${s.invoice ? `<br>송장 ${esc(s.invoice)} ${esc(s.courier || '')}` : ''}</div>
       ${s.canCancel
         ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>`
-        : (st.indexOf('접수') >= 0 ? `<div class="locked">🔒 ${esc(dlOneLine(s.cancelWhy) || '변경은 물류담당자에게 문의해주세요')}</div>` : '')}
+        : (!isC && st.indexOf('접수') >= 0 ? `<div class="locked">🔒 ${esc(dlOneLine(s.cancelWhy) || '변경은 물류담당자에게 문의해주세요')}</div>` : '')}
       ${dlRetBoxM(s)}
       ${s.canReturn ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlReturn('${esc(s.at)}')">↩️ 반품접수</button></div>` : ''}
     </div>`;
@@ -1686,6 +1677,14 @@ window.dlSend = async function () {
     } else { alert((d && d.error) || '접수에 실패했어요.'); btn.disabled = false; btn.textContent = '배송요청 보내기'; }
   } catch (_) { alert('연결 오류로 보내지 못했어요.'); btn.disabled = false; btn.textContent = '배송요청 보내기'; }
 };
+// 배송요청 상태 분류 (취소건은 다른 칩에 안 섞이게) — 11-11
+function dlShipIs(s, st) {
+  const x = String(s.status || ''), c = x.indexOf('취소') >= 0;
+  return st === 'cancel' ? c
+       : st === 'wait' ? (!c && x.indexOf('접수') >= 0)
+       : st === 'done' ? (!c && x.indexOf('발송') >= 0)
+       : st === 'return' ? (!c && (x.indexOf('반품') >= 0 || !!s.ret)) : true;
+}
 // 서버 안내문은 줄바꿈이 있어 카드에 그대로 못 쓴다 → 첫 줄만
 function dlOneLine(t){ return String(t == null ? '' : t).split('\n')[0].trim(); }
 window.dlCancel = async function (at) {
@@ -1694,7 +1693,11 @@ window.dlCancel = async function (at) {
   const s = (DL.ship || []).find(x => x.at === at) || {};
   try {
     const d = await dlApi('cancelShipping', { row: s.row, at });
-    if (d && d.ok) { toast('취소했어요'); viewShip(); }
+    if (d && d.ok) {
+      try { store.set(mDlCacheKey(), null); } catch (_) {}
+      alert('✅ 배송요청이 취소됐어요.\n\n' + plainName(s.product || '') + (s.qty ? ' × ' + s.qty : '') + (s.receiver ? ' → ' + s.receiver : '') + '\n\n목록에는 회색 [❌ 취소됨]으로 남아요.');
+      viewShip();
+    }
     else alert((d && d.error) || '취소하지 못했어요.');
   } catch (_) { alert('연결 오류로 취소하지 못했어요.'); }
 };

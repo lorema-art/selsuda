@@ -117,7 +117,7 @@ window.savePin = function () { PIN = $('pin').value.trim(); if (!PIN) return; st
 // ── 사서함 목록 ──
 window.home = async function () {
   if (!PIN) return pinView();
-  CODE = ''; CUR = null; MODE = ''; PH = []; aiCancel(); $('hdrBtn').classList.add('hidden');
+  CODE = ''; CUR = null; MODE = ''; PH = []; aiCancel(); $('hdrBtn').classList.add('hidden'); draftSave();
   $('main').innerHTML = `<div class="card"><label style="margin-top:0">사서함 코드 · 이름으로 찾기</label>
     <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
     <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p>
@@ -230,7 +230,7 @@ window.issueSend = async function (kind) {
   if (d && d.badPin) return pinView(d.error);
   if (!d || !d.ok) { toast('⚠ 못 보냈어요: ' + ((d && d.error) || '오류'), 4000); return; }
   it.memo = (it.memo ? it.memo + ' / ' : '') + '⚠ 반품 권장 안내 보냄';
-  PH = []; toast(`✅ ${d.name || ''} 님에게 안내 보냈어요 (사진 ${d.photos}장)`, 3500);
+  PH = []; draftSave(); toast(`✅ ${d.name || ''} 님에게 안내 보냈어요 (사진 ${d.photos}장)`, 3500);
   openCode(CODE);
 };
 window.qtyCheck = function () {
@@ -302,6 +302,7 @@ window.addPhotos = async function (files) {
   $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
   $('ph').value = '';
   aiSchedule();
+  clearTimeout(DRAFT_T); draftNow();   // 찍자마자 폰에 보관
 };
 async function itemRead() {
   if (!$('aiBox')) return;
@@ -333,7 +334,7 @@ async function qRun() {
       const job = Q.find(x => !x.err); if (!job) break;
       let d;
       try { d = await call('inspDone', job.body); } catch (e) { d = { ok: false, error: '연결 오류' }; }
-      if (d.ok || /이미 검수된/.test(d.error || '')) { Q = Q.filter(x => x !== job); toast('저장됨 ✅ ' + job.label + (d.photos ? ` (사진 ${d.photos}장)` : '')); }
+      if (d.ok || /이미 검수된/.test(d.error || '')) { Q = Q.filter(x => x !== job); qSave(); toast('저장됨 ✅ ' + job.label + (d.photos ? ` (사진 ${d.photos}장)` : '')); }
       else { job.err = d.error || '저장 실패'; if (d.badPin) { qBar(); return pinView(d.error); } }
       qBar();
     }
@@ -380,9 +381,10 @@ window.done = async function () {
   Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product + (partial ? ` (일부 ${c}개)` : ''), err: '',
     body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: nomb, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
             fixQty: qm === 'fix', partial, note: [noExpTag, $('note').value.trim()].filter(Boolean).join(' / '), photos: PH.map(p => p.big) } });
-  qBar(); qRun();
+  qSave(); qBar(); qRun();
   if (partial) { keepPartial(it, Number(c)); PH = []; toast(`일부 검수 ✅ ${c}개 저장 — 남은 ${it.qty}개는 목록에 그대로 있어요`, 3500); }
   else { dropItem(it); PH = []; toast('검수 완료 ✅ 뒤에서 저장할게요'); }
+  draftSave();
   openCode(CODE);
 };
 
@@ -483,11 +485,76 @@ window.unregSave = async function () {
     expiry: $('uExp').value.trim(), note: $('uNote').value.trim(), photos: PH.map(p => p.big) }); }
   catch (e) { d = { ok: false, error: '연결 오류 — 보내졌는지 시트 「미등록입고」 탭을 확인해 주세요.' }; }
   if (!d.ok) { alert(d.error || '보내지 못했어요'); b.disabled = false; b.textContent = '📤 수강생에게 사진 보내기'; return; }
+  PH = []; draftSave();
   toast('📤 ' + (d.name || '') + ' 님에게 사진 ' + d.photos + '장 보냈어요', 3500);
   openCode(CODE || $('uMb').value.trim());
 };
 
-if (!URL_) $('main').innerHTML = `<div class="warn">두뇌 주소(config.js)를 못 읽었어요.</div>`; else home();
+// 📷 사진·입력 임시 보관(11-12 루크 "사진 찍으면 새로고침돼서 사라져 시간을 많이 잡아먹어")
+//  폰이 카메라를 여는 동안 메모리가 모자라면 브라우저가 이 페이지를 꺼버린다 → 돌아오면 처음부터 다시 열림.
+//  그래서 사진·입력칸·화면 위치를 폰 안(IndexedDB)에 계속 저장해 두고, 다시 열리면 그 자리로 되살린다.
+//  '뒤에서 저장 중'인 검수 완료 건(Q)도 같이 보관 → 페이지가 꺼져도 다시 열리면 이어서 저장.
+const IDB = (() => { let p; return () => p || (p = new Promise((ok, no) => {
+  const r = indexedDB.open('insp', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('kv');
+  r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+})); })();
+async function kvSet(k, v) {
+  try { const db = await IDB(); await new Promise((ok, no) => { const t = db.transaction('kv', 'readwrite'), s = t.objectStore('kv');
+    if (v == null) s.delete(k); else s.put(v, k); t.oncomplete = ok; t.onerror = () => no(t.error); t.onabort = () => no(t.error); }); } catch (_) {}
+}
+async function kvGet(k) {
+  try { const db = await IDB(); return await new Promise(ok => { const r = db.transaction('kv').objectStore('kv').get(k); r.onsuccess = () => ok(r.result); r.onerror = () => ok(null); }); }
+  catch (_) { return null; }
+}
+const DRAFT_F = ['exp', 'cnt', 'note', 'issueB', 'uMb', 'uProd', 'uOpt', 'uQty', 'uExp', 'uNote'];
+let DRAFT_T = null;
+function draftNow() {
+  const view = CUR && $('doneBtn') ? 'item' : ($('uBtn') ? 'unreg' : (MODE === 'find' ? 'find' : ''));
+  if (!view || !PH.length) return kvSet('draft', null);
+  const f = {}; DRAFT_F.forEach(k => { if ($(k)) f[k] = $(k).value; });
+  return kvSet('draft', { t: Date.now(), view, code: CODE, row: CUR ? CUR.row : 0, at: CUR ? CUR.at : '', f, ph: PH, find: FIND, nomb: NOMB, lastAi: LAST_AI });
+}
+function draftSave() { clearTimeout(DRAFT_T); DRAFT_T = setTimeout(draftNow, 250); }
+function qSave() { kvSet('queue', Q.map(x => ({ row: x.row, label: x.label, body: x.body }))); }
+document.addEventListener('input', () => { if (PH.length) draftSave(); }, true);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { clearTimeout(DRAFT_T); draftNow(); } });
+// 사진 찍으러 카메라로 가기 직전에도 한 번 저장(입력칸에 적어둔 것까지)
+document.addEventListener('click', e => { if (e.target && e.target.closest && e.target.closest('button') && /사진 찍기/.test(e.target.closest('button').textContent || '')) { clearTimeout(DRAFT_T); draftNow(); } }, true);
+
+async function boot() {
+  const q = await kvGet('queue');
+  if (q && q.length && PIN) {                                // 꺼지기 전에 저장 못 한 검수 완료 건 → 이어서 저장
+    Q = q.map(x => ({ row: x.row, label: x.label, body: x.body, err: '' }));
+    const busy = new Set(Q.map(x => x.row)); if (ALL) { ALL = ALL.filter(x => !busy.has(x.row)); GROUPS = groupsOf(ALL); }
+    qBar(); qRun();
+  }
+  const d = await kvGet('draft');
+  if (!PIN || !d || !d.ph || !d.ph.length || Date.now() - d.t > 6 * 3600e3) return home();
+  try {
+    if (d.view === 'find') findView();
+    else {
+      if (!ALL) { try { await loadAll(); } catch (_) {} }
+      await openCode(d.code || '');
+      if (d.view === 'item') {
+        const i = ITEMS.findIndex(x => x.row === d.row && String(x.at) === String(d.at));
+        if (i < 0) { kvSet('draft', null); toast('아까 찍던 상품이 목록에 없어요 (이미 검수됐을 수 있어요)', 3500); return; }
+        openItem(i);
+      } else unregView();
+    }
+    PH = d.ph; FIND = d.find || null; NOMB = !!d.nomb; LAST_AI = d.lastAi || null;
+    if (MODE === 'find') { FIND = null; AIREAD_N = 0; }        // 사서함 찾기는 다시 읽어 후보를 띄운다
+    Object.keys(d.f || {}).forEach(k => { if ($(k)) $(k).value = d.f[k]; });
+    if ($('thumbs')) $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
+    if (CUR && $('cnt')) qtyCheck();
+    const empty = $('exp') ? !$('exp').value.trim() : ($('uExp') ? !$('uExp').value.trim() : true);
+    if (MODE === 'find' || (AI && empty && !LAST_AI)) { AIREAD_N = 0; aiSchedule(); } else AIREAD_N = PH.length;
+    if (LAST_AI && $('aiBox') && MODE !== 'find') $('aiBox').innerHTML = aiHtml(LAST_AI);
+    toast(`📷 아까 찍은 사진 ${PH.length}장과 적은 내용을 되살렸어요`, 4000);
+  } catch (e) { home(); }
+}
+
+if (!URL_) $('main').innerHTML = `<div class="warn">두뇌 주소(config.js)를 못 읽었어요.</div>`; else boot();
 </script>
 </body>
 </html>

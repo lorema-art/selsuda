@@ -246,6 +246,12 @@ window.qtyCheck = function () {
 };
 // 🤖 AI가 읽은 값 — '확실'할 때만 칸에 자동으로 넣고, 애매하면 제안만 보여주고 [넣기]로 사람이 고른다(11-09 정확도)
 let LAST_AI = null, NOMB = false;
+// 📮 '사서함 번호 없음' 안내는 자동으로 보내지 않는다(11-12 루크: 주소에 번호를 적었는데도 안내가 감 = AI가 못 읽은 것).
+//  AI가 번호를 못 찾았을 때만, 검수 완료 직전에 담당자에게 송장을 직접 보고 확인받는다.
+function noMbOk() {
+  if (!NOMB) return false;
+  return confirm('📮 AI가 송장에서 사서함 번호를 못 찾았어요.\n\n송장(받는 주소)을 직접 보고 확인해 주세요.\n정말 사서함 번호가 없나요?\n\n[확인] = 번호 없음 → 수강생에게 "사서함 번호를 꼭 적어주세요" 안내 보내기\n[취소] = 번호 있음(AI가 못 읽음) → 안내 안 보냄');
+}
 function aiFill(d) {
   LAST_AI = d;
   const ex = $('exp') || $('uExp'), cn = $('cnt') || $('uQty');
@@ -368,10 +374,11 @@ window.done = async function () {
   }
   if ($('cnt').value === '' && !confirm('개수를 안 넣었어요. 등록 수량 그대로 검수 완료할까요?')) { $('cnt').focus(); return; }
   const c = $('cnt').value;
+  const nomb = noMbOk();
   const qm = (document.querySelector('input[name="qm"]:checked') || {}).value || '';
   const partial = qm === 'part' && c !== '' && Number(c) > 0 && Number(c) < it.qty;
   Q.push({ row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product + (partial ? ` (일부 ${c}개)` : ''), err: '',
-    body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: NOMB, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
+    body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: nomb, expiry: $('exp').value.trim(), count: c === '' ? null : Number(c),
             fixQty: qm === 'fix', partial, note: [noExpTag, $('note').value.trim()].filter(Boolean).join(' / '), photos: PH.map(p => p.big) } });
   qBar(); qRun();
   if (partial) { keepPartial(it, Number(c)); PH = []; toast(`일부 검수 ✅ ${c}개 저장 — 남은 ${it.qty}개는 목록에 그대로 있어요`, 3500); }
@@ -404,7 +411,7 @@ async function findRead() {
   FIND.noMb = !!(d.labelSeen && !d.mbRaw);            // 송장은 보이는데 사서함 번호가 안 적힘 → 검수 후 수강생에게 안내
   if (MODE !== 'find') {                                // 읽는 사이 상품(또는 미등록)을 먼저 눌렀으면 → 그 화면 칸에 바로 채움
     NOMB = FIND.noMb; aiFill(d);
-    $('aiBox').innerHTML = (FIND.noMb ? `<div class="warn">📮 송장에 사서함 번호가 없어요 — 검수를 마치면 수강생에게 "사서함 번호를 꼭 적어주세요" 안내가 가요(하루 1번).</div>` : '') + aiHtml(d);
+    $('aiBox').innerHTML = (FIND.noMb ? `<div class="warn">📮 AI가 송장에서 사서함 번호를 못 찾았어요 — 검수 완료 때 한 번 더 물어봐요(정말 없을 때만 수강생에게 안내).</div>` : '') + aiHtml(d);
     if ($('uProd') && d.product && !$('uProd').value) $('uProd').value = d.product;
     return;
   }
@@ -415,7 +422,7 @@ async function findRead() {
     h += `<div class="warn">📮 송장에 사서함 번호가 없어요. 받는 분 <b>${esc(d.recvName || '?')}</b> ${esc(d.recvPhone || '')}
       ${cands.length ? '<br>이 수강생 아닌가요? 눌러서 고르세요.' : '<br>명부에서 비슷한 수강생을 못 찾았어요. 아래에서 직접 골라주세요.'}
       ${cands.map(c => `<button type="button" class="btn ghost" style="margin-top:6px" onclick="findPick('${esc(c.mb || c.name)}')"><span class="mb">${esc(c.mb || '번호없음')}</span>${esc(c.name)} <span class="muted">(${esc(c.why)})</span></button>`).join('')}
-      ${FIND.noMb ? '<br><span class="muted">검수를 마치면 그 수강생에게 "사서함 번호를 꼭 적어주세요" 안내가 자동으로 가요(하루 1번).</span>' : ''}</div>`;
+      ${FIND.noMb ? '<br><span class="muted">검수 완료 때 "정말 번호가 없나요?" 한 번 더 물어봐요 — [확인]일 때만 수강생에게 안내가 가요.</span>' : ''}</div>`;
   }
   h += aiHtml(d);
   LAST_AI = d;
@@ -471,7 +478,8 @@ window.unregSave = async function () {
   if (!PH.length) { alert('사진을 1장 이상 찍어주세요 (수강생에게 보내져요)'); return; }
   const b = $('uBtn'); b.disabled = true; b.textContent = '보내는 중…';
   let d;
-  try { d = await call('inspAddUnreg', { noMbNotice: NOMB, mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
+  const nomb = noMbOk();
+  try { d = await call('inspAddUnreg', { noMbNotice: nomb, mb: $('uMb').value.trim(), product: $('uProd').value.trim(), option: $('uOpt').value.trim(), qty: Number($('uQty').value || 0),
     expiry: $('uExp').value.trim(), note: $('uNote').value.trim(), photos: PH.map(p => p.big) }); }
   catch (e) { d = { ok: false, error: '연결 오류 — 보내졌는지 시트 「미등록입고」 탭을 확인해 주세요.' }; }
   if (!d.ok) { alert(d.error || '보내지 못했어요'); b.disabled = false; b.textContent = '📤 수강생에게 사진 보내기'; return; }

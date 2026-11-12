@@ -55,6 +55,11 @@ async function refreshSessionCohort() {
   if (!session || !session.userId) return false;
   try {
     const d = await api('whoami', { userId: session.userId });
+    if (d && d.blocked) {   // 🚫 강사가 전체명단에서 '아님' 표시(11-12) → 로그아웃
+      store.del('session');
+      alert('🚫 수강생 확인이 되지 않은 계정이라 로그인할 수 없어요.\n\n담당 강사님께 연락해 주세요.');
+      location.reload(); return false;
+    }
     if (!d || !d.ok || !d.cohort) return false;
     if (String(d.cohort) === String(session.cohort || '') &&
         (!d.nickname || d.nickname === session.nickname)) return false;

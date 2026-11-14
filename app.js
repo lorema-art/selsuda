@@ -1595,7 +1595,8 @@ function paneShip() {
     h += `<div class="chips shipChips">
       ${[['all','전체'],['wait','접수'],['done','발송완료'],['return','반품']].concat(cnt('cancel') ? [['cancel','취소']] : []).map(([k, t]) =>
         `<button type="button" class="chip ${DL.shipTab === k ? 'on' : ''}" onclick="dlShipTab('${k}')">${t}<span class="cnt">${cnt(k)}</span></button>`).join('')}
-    </div>`;
+    </div>
+    <button class="btn ghost" style="width:100%;margin:0 0 10px" onclick="dlExportXlsx()">📥 엑셀 다운로드 (운송장번호 포함)</button>`;
   }
   const shown = DL.ship.filter(s => dlShipIs(s, DL.shipTab || 'all'));
   h += shown.length ? shown.map(s => {
@@ -1634,6 +1635,49 @@ function dlSortNewest(list) {
     .map(x => x.s);
 }
 window.dlShipTab = (k) => { DL.shipTab = k; renderShip(); };
+
+// 📥 11-14 루크: 배송요청을 운송장번호까지 엑셀로(지금 고른 상태칩 기준). PC 앱과 같은 칸.
+//  엑셀 라이브러리는 누를 때만 불러온다(평소 앱 무게 그대로). 못 불러오면 CSV 로 대신.
+function mLoadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((ok, no) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload = () => window.XLSX ? ok(window.XLSX) : no(new Error('xlsx'));
+    sc.onerror = () => no(new Error('xlsx'));
+    document.head.appendChild(sc);
+  });
+}
+window.dlExportXlsx = async function () {
+  const rows = (DL.ship || []).filter(s => dlShipIs(s, DL.shipTab || 'all'));
+  if (!rows.length) { toast('내려받을 배송요청이 없어요.'); return; }
+  const head = ['요청일시', '상태', '상품명', '옵션', '수량', '받는사람', '전화번호', '주소', '배송메모', '택배사', '운송장번호', '출고일', '반품 운송장'];
+  const aoa = [head].concat(rows.map(s => [
+    fmtDT(s.at), String(s.status || ''), String(s.product || ''), String(s.option || ''), Number(s.qty) || 0,
+    String(s.receiver || ''), String(s.phone || ''), String(s.addr || ''), String(s.memo || ''),
+    String(s.courier || ''), String(s.invoice || ''), String(s.shipDate || ''), String((s.ret && s.ret.invoice) || '')
+  ]));
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const base = `배송요청_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  try {
+    const X = await mLoadXlsx();
+    const ws = X.utils.aoa_to_sheet(aoa);
+    for (let r = 1; r < aoa.length; r++) for (const c of [6, 10, 12]) {   // 전화·운송장 = 글자(앞자리 0 보존)
+      const ref = X.utils.encode_cell({ r, c }); if (ws[ref]) { ws[ref].t = 's'; ws[ref].z = '@'; }
+    }
+    ws['!cols'] = [17, 9, 34, 14, 6, 10, 14, 44, 20, 10, 16, 11, 14].map(w => ({ wch: w }));
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, '배송요청');
+    X.writeFile(wb, base + '.xlsx');
+  } catch (_) {   // 라이브러리 못 받으면 CSV(엑셀로 열림). 전화·운송장은 ="…" 로 감싸 0 보존
+    const cell = (v, i) => { const t = String(v == null ? '' : v); return (i === 6 || i === 10 || i === 12) && t ? `="${t}"` : '"' + t.replace(/"/g, '""') + '"'; };
+    const csv = '﻿' + aoa.map((r, ri) => r.map((v, i) => ri ? cell(v, i) : '"' + v + '"').join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = base + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+  }
+  toast(`📥 ${rows.length}건 내려받기`);
+};
 
 // 선택한 상품의 구매처·구매가격·입고메모 표시
 window.dlInfo = function () {

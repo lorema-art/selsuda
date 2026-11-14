@@ -1609,7 +1609,7 @@ function paneShip() {
       <div class="m">${esc(s.receiver || '')} · ${esc(fmtDT(s.at))}
         ${s.invoice ? `<br>송장 ${esc(s.invoice)} ${esc(s.courier || '')}` : ''}</div>
       ${s.canCancel
-        ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlCancel('${esc(s.at)}')">요청 취소</button></div>`
+        ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="this.disabled=true;this.textContent='⏳ 취소 중...';dlCancel('${esc(s.at)}').finally(()=>{this.disabled=false;this.textContent='요청 취소'})">요청 취소</button></div>`
         : (!isC && st.indexOf('접수') >= 0 ? `<div class="locked">🔒 ${esc(dlOneLine(s.cancelWhy) || '변경은 물류담당자에게 문의해주세요')}</div>` : '')}
       ${dlRetBoxM(s)}
       ${s.canReturn ? `<div class="row" style="margin-top:9px"><button class="btn mini ghost" onclick="dlReturn('${esc(s.at)}')">↩️ 반품접수</button></div>` : ''}
@@ -1743,7 +1743,13 @@ window.dlCancel = async function (at) {
   try {
     const d = await dlApi('cancelShipping', { row: s.row, at });
     if (d && d.ok) {
-      try { store.set(mDlCacheKey(), null); } catch (_) {}
+      // 11-14: 캐시를 버리면 전부 다시 받느라 오래 걸렸다 → 취소한 건만 '취소'로 바꿔 바로 보여주고 뒤에서 갱신
+      try {
+        s.status = '취소'; s.canCancel = false;
+        const c = store.get(mDlCacheKey(), null);
+        const t = c && c.ship && (c.ship.items || []).find(x => x.at === at);
+        if (t) { t.status = '취소'; t.canCancel = false; store.set(mDlCacheKey(), c); } else store.set(mDlCacheKey(), null);
+      } catch (_) {}
       alert('✅ 배송요청이 취소됐어요.\n\n' + plainName(s.product || '') + (s.qty ? ' × ' + s.qty : '') + (s.receiver ? ' → ' + s.receiver : '') + '\n\n목록에는 회색 [❌ 취소됨]으로 남아요.');
       viewShip();
     }

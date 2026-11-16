@@ -171,6 +171,7 @@ window.openCode = async function (q) {
       <b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
       <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}${it.mb && ITEMS.some(x => x.mb !== it.mb) ? ' · ' + esc(it.mb + ' ' + it.name) : ''}</span>
       ${it.memo ? `<div class="muted">📝 ${esc(it.memo)}</div>` : ''}
+      ${it.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고 — 고객에게서 돌아온 물건이에요. 상태(개봉·파손·구성품)를 확인해 주세요</div>` : ''}
       ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)} — 두 번 등록한 건 아닌지 확인</div>` : ''}</div>`).join('')
       : `<div class="card muted">'${esc(q)}' 검수 대기 입고가 없어요.</div>`) +
     `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>`;
@@ -190,6 +191,7 @@ window.openItem = function (i) {
     <div class="card"><span class="mb">${esc(CUR.mb)}</span>${esc(CUR.name)}<h2 style="margin-top:8px">${esc(CUR.product)}${CUR.option ? ' · ' + esc(CUR.option) : ''}</h2>
       <div class="muted">수강생 등록 수량 <b>${CUR.qty}개</b>${CUR.site ? ' · ' + esc(CUR.site) : ''}</div>
       ${CUR.memo ? `<div class="muted">📝 ${esc(CUR.memo)}</div>` : ''}
+      ${CUR.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고 — 고객에게서 돌아온 물건이에요. 상태(개봉·파손·구성품)를 확인하고 사진을 남겨 주세요</div>` : ''}
       ${CUR.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(CUR.dup)}</div>` : ''}
       ${photoBlock()}
       <label>유통기한</label><input id="exp" placeholder="예: 2027-05-31 (AI가 사진에서 읽어 채워요)" value="${esc(CUR.exp || '')}">
@@ -440,6 +442,7 @@ window.findPick = function (code) {
     box.innerHTML = `<h2><span class="mb">${esc(code)}</span>${esc((ITEMS[0] && ITEMS[0].name) || (FIND && FIND.name) || '')} · 검수 대기 ${ITEMS.length}건</h2>` +
       ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})"><b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
         <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}</span>
+        ${it.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고</div>` : ''}
         ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)}</div>` : ''}</div>`).join('') +
       (ITEMS.length ? '' : `<div class="card muted">이 사서함은 검수 대기 입고가 없어요. 수강생이 등록을 안 했다면 아래 버튼으로 사진을 보내주세요.</div>`) +
       `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>

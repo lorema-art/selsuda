@@ -2259,6 +2259,23 @@ function dealBestMargin(it) {
   const xs = [m.rep, m.unit].filter(v => v !== null);
   return xs.length ? Math.max.apply(null, xs) : null;
 }
+// 11-16 루크(수강생 질문 "80매 8개 사서 80매 1개로 올리는 건가요?"): 마진이 어떤 판매 방법 기준인지 풀어서 보여준다.
+//  낱개 마진이 더 좋으면 = 묶음을 사서 네이버 '1개' 구성으로 나눠 판다 / 묶음 마진이 더 좋으면 = 네이버 같은 묶음 구성으로 그대로.
+function dealHowSell(it) {
+  const mm = dealMargins(it);
+  if (mm.unit === null && mm.rep === null) return null;
+  const useUnit = mm.unit !== null && (mm.rep === null || mm.unit >= mm.rep);
+  const r = Number(useUnit ? it.ratioUnit : it.ratioRep) || 0;
+  const repQ = Number(it.naverRepQty) || 0;
+  const base = useUnit ? (Number(it.naverUnitPrice) || 0) : (Number(it.naverRepPrice) || 0);
+  const mk = it.market || '오픈마켓';
+  let txt;
+  if (useUnit && r > 1) txt = `${mk}에서 1번 사면 네이버 <b>1개짜리 ${r}개</b>가 들어 있어요 → 네이버에 <b>1개 구성으로 올려 ${r}번</b> 나눠 파는 기준 마진이에요.`;
+  else if (useUnit) txt = `${mk}에서 산 그대로 <b>1개씩</b> 파는 기준 마진이에요.`;
+  else if (r > 1) txt = `${mk}에서 1번 사면 네이버 <b>${repQ || '?'}개 묶음</b> ${r}건이 나와요 → <b>${repQ || '?'}개 묶음으로 ${r}번</b> 파는 기준 마진이에요.`;
+  else txt = `${mk}에서 산 그대로 <b>네이버 ${repQ || '?'}개 묶음 구성</b>으로 파는 기준 마진이에요.`;
+  return { useUnit, base, txt };
+}
 // 11-03 루크: 마진이 마이너스(어떻게 팔아도 손해)인 상품은 목록에서 아예 뺀다 — PC와 같은 규칙
 function dealIsLoss(it) { const b = dealBestMargin(it); return b !== null && b < 0; }
 function dealToMargin(code) {
@@ -2505,7 +2522,8 @@ window.openDealChoice = function (code) {
        <label class="dealChkRow"><input type="checkbox" class="dealChk" onchange="dealCheckStep()"> <b>구성 수량</b>(몇 개입·묶음)을 맞춰 봤어요</label>
        <label class="dealChkRow"><input type="checkbox" class="dealChk" onchange="dealCheckStep()"> 오픈마켓 <b>배송비·실제 결제가</b>를 확인했어요</label>`;
   const m = dealBestMargin(it), unit = Number(it.naverUnitPrice) || 0, rep = Number(it.naverRepPrice) || 0;
-  const sell = dealSellPrice(unit > 0 ? unit : rep, it);
+  const how = dealHowSell(it);
+  const sell = dealSellPrice(how && how.base > 0 ? how.base : (unit > 0 ? unit : rep), it);   // 마진 기준과 같은 구성의 값(11-16)
   const al = it.claimed ? dealClaimAlert((DEALS.myClaims || []).find(c => String(c.goodscode) === String(it.goodscode) && c.market === it.market) || { market: it.market, goodscode: it.goodscode, margin: m, price: it.price }) : '';
   const step2 = it.claimed
     ? `<div class="dealStepDone">✅ 찜 완료 — 내 자리예요 (${cnt}/${max}명)</div>
@@ -2517,6 +2535,7 @@ window.openDealChoice = function (code) {
   sheet(`<h3>🧭 이 상품 올려보기</h3>
     <p class="muted" style="margin:6px 0 10px;line-height:1.6">${esc(String(it.name || '').slice(0, 70))}
       ${m !== null ? `<br><b style="color:${m > 0 ? '#1e7a46' : '#c0392b'}">예상 마진 ${(m > 0 ? '+' : '') + m.toLocaleString()}원</b>` : ''}${dealNewbie(it) ? ' <span class="tagNewbie">⭐ 초보 추천</span>' : ''}</p>
+    ${how ? `<div class="muted" style="font-size:12.5px;line-height:1.7;margin:-4px 0 10px;padding:8px 10px;background:#f4f8ff;border-radius:8px">📦 ${how.txt}</div>` : ''}
     ${al ? `<div class="dealClaimAlert" style="margin-bottom:10px">⚠ ${esc(al)}</div>` : ''}
     <div class="dealStep"><div class="dealStepT">① 확인</div>
       <button class="btn ghost" style="padding:8px" onclick="openDeal('${esc(it.url)}')">🛒 ${esc(it.market || '오픈마켓')}에서 보기</button>

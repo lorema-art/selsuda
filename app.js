@@ -133,6 +133,7 @@ $('loginForm').addEventListener('submit', async (e) => {
       session = { userId, nickname: d.nickname || '', cohort: d.cohort || '' };
       store.set('session', session);
       enterMain();
+      setTimeout(askPushOnOpen, 2500);   // 🔔 폰 알림 꺼져 있으면 켤지 묻기(11-16)
     } else { msg((d && d.error) || '로그인에 실패했어요.', 'err'); }
   } catch (_) { msg('연결이 오래 걸리고 있어요. 잠시 후 [로그인]을 한 번 더 눌러주세요.', 'err'); }
   clearTimeout(slow);
@@ -2418,7 +2419,7 @@ async function refreshPushBtn() {
   }
   const sub = await pushCurrentSub();
   btn.disabled = false;
-  btn.textContent = sub ? '🔕 알림 끄기 (핫딜·공동구매)' : '🔔 알림 받기 (핫딜·공동구매)';
+  btn.textContent = sub ? '🔕 폰 알림 끄기 (택배·핫딜·공구)' : '🔔 폰 알림 받기 (택배·핫딜·공구)';
   btn.classList.toggle('ghost', !!sub);
 }
 window.toggleDealPush = async function () {
@@ -2436,11 +2437,55 @@ window.toggleDealPush = async function () {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(window.PUSH_PUBKEY) });
       const d = await api('pushSub', { sub: sub.toJSON() });
-      if (d && d.ok) toast('좋아요! 새 핫딜·공동구매가 뜨면 알려드릴게요 🔔');
+      if (d && d.ok) toast('좋아요! 택배·물류팀 메시지·핫딜·공구 소식을 폰으로 알려드릴게요 🔔');
       else { await sub.unsubscribe(); toast('저장에 실패했어요. 잠시 후 다시 시도해주세요.'); }
     }
   } catch (e) { toast('알림 설정에 실패했어요'); }
   await refreshPushBtn();
+};
+// 🔔 앱에 들어올 때마다 — 폰 알림이 꺼져 있으면 켤지 묻는다(11-16 루크). '나중에'는 이번 접속만 안 물음.
+async function askPushOnOpen() {
+  try {
+    if (!session || !session.userId) return;
+    if (sessionStorage.getItem('pushAsked')) return;
+    if (!$('sheet').classList.contains('hidden')) { setTimeout(askPushOnOpen, 4000); return; }   // 다른 안내가 떠 있으면 닫힌 뒤
+    sessionStorage.setItem('pushAsked', '1');
+    const why = '<div class="muted" style="font-size:13px;line-height:1.6;margin:6px 0 12px">🚚 송장 등록·출고·검수 완료<br>💬 물류팀 메시지<br>🔥 핫딜 · 🤝 공동구매 소식</div>';
+    if (!pushReady()) {
+      if (isIOS() && !isStandalone()) {
+        sheet(`<h3>🔔 폰 알림을 받으려면</h3>${why}
+          <div style="font-size:13.5px;line-height:1.7">아이폰은 <b>홈 화면에 설치</b>해야 알림이 와요.<br>
+          사파리 아래 <b>공유 버튼(□↑)</b> → <b>'홈 화면에 추가'</b> → 홈 화면의 셀수다 아이콘으로 들어와 주세요.</div>
+          <button class="btn ghost" style="margin-top:12px" onclick="closeSheet()">나중에</button>`);
+      }
+      return;                                       // 그 밖에 알림을 못 쓰는 브라우저는 조용히
+    }
+    if (await pushCurrentSub()) return;             // 이미 켜져 있음
+    if (Notification.permission === 'denied') {
+      sheet(`<h3>🔔 폰 알림이 막혀 있어요</h3>${why}
+        <div style="font-size:13.5px;line-height:1.7">예전에 <b>'차단'</b>을 눌러서 여기서 다시 켤 수가 없어요.<br>
+        ${isIOS() ? '아이폰 <b>설정 → 알림 → 셀수다</b>에서 알림 허용을 켜 주세요.' : '주소창 왼쪽 <b>자물쇠(또는 ⓘ) → 권한 → 알림 → 허용</b>으로 바꾼 뒤 새로고침해 주세요.'}</div>
+        <button class="btn ghost" style="margin-top:12px" onclick="closeSheet()">확인</button>`);
+      return;
+    }
+    sheet(`<h3>🔔 폰 알림을 켤까요?</h3>${why}
+      <div class="muted" style="font-size:12px">앱을 안 켜 놔도 폰으로 바로 와요. 나중에 '오늘의 할인' 화면에서 끌 수 있어요.</div>
+      <button class="btn" style="margin-top:12px" onclick="pushTurnOnFromAsk()">🔔 알림 켜기</button>
+      <button class="btn ghost" style="margin-top:6px" onclick="closeSheet()">나중에</button>`);
+  } catch (_) {}
+}
+window.pushTurnOnFromAsk = async function () {
+  closeSheet(true);
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('알림 권한을 허용해야 받을 수 있어요'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(window.PUSH_PUBKEY) });
+    const d = await api('pushSub', { sub: sub.toJSON() });
+    if (d && d.ok) toast('좋아요! 택배·물류팀 메시지·핫딜·공구 소식을 폰으로 알려드릴게요 🔔');
+    else { await sub.unsubscribe(); toast('저장에 실패했어요. 잠시 후 다시 시도해주세요.'); }
+  } catch (_) { toast('알림 설정에 실패했어요'); }
+  try { refreshPushBtn(); } catch (_) {}
 };
 window.setDealFilter = function (f) { DEALS.filter = f; renderDeals(); };
 window.openDeal = function (u) { if (u) window.open(u, '_blank', 'noopener'); };
@@ -2788,8 +2833,10 @@ async function checkNegativeBalance() {
     if (location.hash === '#deals') go('deals');    // 푸시 알림 눌러 들어온 경우 → 할인 탭
     if (location.hash === '#pt') go('pt');          // 📈 가격 알림 눌러 들어온 경우
     if (location.hash === '#gb') go('gb');          // 🤝 공동구매 알림 눌러 들어온 경우(11-05)
+    if (['#ship', '#inv', '#buy'].includes(location.hash)) go(location.hash.slice(1));   // 📦 택배 폰알림 눌러 들어온 경우(11-16)
     // 강사가 기수를 바꿨으면 따라잡는다 (바뀌면 화면도 새로 그림)
-    refreshSessionCohort().then(function (ch) { if (ch && !['#deals', '#pt', '#gb'].includes(location.hash)) enterMain(); });
+    refreshSessionCohort().then(function (ch) { if (ch && !['#deals', '#pt', '#gb', '#ship', '#inv', '#buy'].includes(location.hash)) enterMain(); });
+    setTimeout(askPushOnOpen, 2500);   // 🔔 폰 알림 꺼져 있으면 켤지 묻기(들어올 때마다, 11-16 루크)
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});

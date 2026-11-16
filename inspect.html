@@ -58,6 +58,57 @@ let PIN = store.get('insp_pin'), AI = true, GROUPS = [], ITEMS = [], CODE = '', 
 let ALL = null, MODE = '', FIND = null;
 function matchQ(it, q) { q = String(q || '').toUpperCase().replace(/\s+/g, ''); const code = String(it.mb || '').toUpperCase();
   return code === q || (code + '|' + it.name + '|' + it.nick).toUpperCase().replace(/\s+/g, '').indexOf(q) >= 0; }
+// ── 수강생 입고 목록 정렬·AI 추천·검색 (11-16 루크) ──
+//  ① 기본은 최신 입고신청이 위로 ② AI가 사진에서 읽은 상품명과 비슷한 입고를 맨 위로(🤖 추천) ③ 목록 안 검색
+function tsOf(it) {
+  const m = String(it.at || '').match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:\D+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!m) return 0;
+  let h = Number(m[4] || 0); if (/오후|PM/i.test(it.at) && h < 12) h += 12; if (/오전|AM/i.test(it.at) && h === 12) h = 0;
+  return new Date(+m[1], +m[2] - 1, +m[3], h, +(m[5] || 0), +(m[6] || 0)).getTime();
+}
+function normP(s) { return String(s || '').toLowerCase().replace(/\d+\s*(ml|g|kg|l|매|개입?|정|캡슐|포|병|팩|입)\b/g, ' ').replace(/[^0-9a-z가-힣]+/g, ' ').trim(); }
+function bigrams(s) { s = s.replace(/\s+/g, ''); const o = new Map(); for (let i = 0; i < s.length - 1; i++) { const k = s.slice(i, i + 2); o.set(k, (o.get(k) || 0) + 1); } return o; }
+function simP(a, b) {                                    // 0~1: 글자 두 개씩 겹침(다이스) + 단어 겹침
+  a = normP(a); b = normP(b); if (!a || !b) return 0;
+  const A = bigrams(a), B = bigrams(b); let inter = 0, na = 0, nb = 0;
+  A.forEach((v, k) => { na += v; if (B.has(k)) inter += Math.min(v, B.get(k)); }); B.forEach(v => { nb += v; });
+  const dice = na + nb ? 2 * inter / (na + nb) : 0;
+  const ta = a.split(' ').filter(w => w.length >= 2), tb = new Set(b.split(' ').filter(w => w.length >= 2));
+  const tok = ta.length ? ta.filter(w => tb.has(w) || [...tb].some(x => x.length >= 3 && (x.includes(w) || w.includes(x)))).length / ta.length : 0;
+  return Math.max(dice, 0.6 * dice + 0.4 * tok);
+}
+function prepItems(list, aiProd) {                       // ITEMS 자체를 정렬(openItem 이 번호로 집으므로)
+  list.forEach(it => { it._ts = tsOf(it); it._sim = aiProd ? simP(aiProd, it.product + ' ' + (it.option || '')) : 0; it._rec = false; });
+  list.sort((x, y) => (y._ts - x._ts) || ((y.row || 0) - (x.row || 0)));
+  if (aiProd) {
+    const rec = list.filter(it => it._sim >= 0.3).sort((x, y) => y._sim - x._sim).slice(0, 3);
+    rec.forEach(it => { it._rec = true; });
+    return rec.concat(list.filter(it => !it._rec));
+  }
+  return list;
+}
+function listHtml(list, opt) {
+  opt = opt || {};
+  const search = list.length >= 4 ? `<div class="row" style="margin:6px 0"><input id="iq" placeholder="🔍 상품명으로 찾기 (예: 샴푸, 다리미)" oninput="filterItems(this.value)" autocomplete="off"></div>` : '';
+  const recN = list.filter(it => it._rec).length;
+  return search + (recN ? `<div class="muted" style="margin:4px 0">🤖 사진 속 상품과 비슷한 입고를 맨 위에 올렸어요 · 나머지는 최신 신청순</div>` : (list.length > 1 ? `<div class="muted" style="margin:4px 0">최신 입고신청이 위에 있어요</div>` : '')) +
+    list.map((it, i) => `<div class="card item" data-hay="${esc(normP(it.product + ' ' + (it.option || '') + ' ' + (it.memo || '')))}" onclick="openItem(${i})"${it._rec ? ' style="border:2px solid #7c4dff"' : ''}>
+      ${it._rec ? `<div style="font-size:12px;color:#7c4dff;font-weight:700">🤖 AI 추천 — 사진 속 상품과 비슷해요</div>` : ''}
+      <b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
+      <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}${opt.who && it.mb && list.some(x => x.mb !== it.mb) ? ' · ' + esc(it.mb + ' ' + it.name) : ''}</span>
+      ${opt.memo && it.memo ? `<div class="muted">📝 ${esc(it.memo)}</div>` : ''}
+      ${it.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고${opt.memo ? ' — 고객에게서 돌아온 물건이에요. 상태(개봉·파손·구성품)를 확인해 주세요' : ''}</div>` : ''}
+      ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)}${opt.memo ? ' — 두 번 등록한 건 아닌지 확인' : ''}</div>` : ''}</div>`).join('') +
+    (list.length >= 4 ? `<div id="iqNone" class="card muted hidden">찾는 상품이 없어요. 수강생이 등록을 안 했다면 아래 버튼으로 사진을 보내주세요.</div>` : '');
+}
+window.filterItems = function (q) {
+  const w = normP(q).split(' ').filter(Boolean); let n = 0;
+  document.querySelectorAll('.card.item[data-hay]').forEach(el => {
+    const hay = el.dataset.hay.replace(/\s+/g, ''), ok = !w.length || w.every(x => hay.includes(x.replace(/\s+/g, '')));
+    el.style.display = ok ? '' : 'none'; if (ok) n++;
+  });
+  const none = $('iqNone'); if (none) none.classList.toggle('hidden', n > 0);
+};
 function groupsOf(list) { const g = {}; list.forEach(it => { const k = it.mb || ('(' + it.name + ')'); g[k] = g[k] || { mb: it.mb, name: it.name, n: 0 }; g[k].n++; });
   return Object.values(g).sort((a, b) => String(a.mb || 'zz').localeCompare(String(b.mb || 'zz'))); }
 // 속도(11-09 2차): 지난번 목록을 폰에 기억해 두고 열자마자 보여준 뒤, 뒤에서 새 목록으로 바꾼다
@@ -165,14 +216,11 @@ window.openCode = async function (q) {
     if (!d.ok) return pinView(d.error);
     AI = !!d.aiReady; ITEMS = d.items || [];
   }
+  ITEMS = prepItems(ITEMS, '');
   const who = ITEMS[0] ? `<span class="mb">${esc(ITEMS[0].mb || '')}</span>${esc(ITEMS[0].name)}` : esc(q);
   $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><h2>${who} · 검수 대기 ${ITEMS.length}건</h2>` +
-    (ITEMS.length ? ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})">
-      <b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
-      <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}${it.mb && ITEMS.some(x => x.mb !== it.mb) ? ' · ' + esc(it.mb + ' ' + it.name) : ''}</span>
-      ${it.memo ? `<div class="muted">📝 ${esc(it.memo)}</div>` : ''}
-      ${it.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고 — 고객에게서 돌아온 물건이에요. 상태(개봉·파손·구성품)를 확인해 주세요</div>` : ''}
-      ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)} — 두 번 등록한 건 아닌지 확인</div>` : ''}</div>`).join('')
+    (ITEMS.length > 1 ? `<button class="btn pink" style="margin:4px 0" onclick="findView('${esc(ITEMS[0].mb || q)}')">📷 상품 사진 찍으면 AI가 비슷한 입고를 맨 위로</button>` : '') +
+    (ITEMS.length ? listHtml(ITEMS, { who: 1, memo: 1 })
       : `<div class="card muted">'${esc(q)}' 검수 대기 입고가 없어요.</div>`) +
     `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>`;
 };
@@ -392,14 +440,16 @@ window.done = async function () {
 
 // ── 📷 사진부터 찍기 (11-09 루크) — 사진을 먼저 넣으면 AI가 송장·주소의 사서함 코드를 읽어 그 학생 입고를 띄운다.
 //    못 읽거나 틀리면 아래 사서함 버튼에서 직접 고른다.
-window.findView = function () {
+let FIND_PRE = '';   // 사서함 목록에서 [📷 상품 사진…]으로 왔으면 그 사서함(송장이 안 찍혀도 이 학생 목록에서 추천)
+window.findView = function (pre) {
   MODE = 'find'; PH = []; FIND = null; CUR = null; aiCancel(); AIKIND = 'find'; AIREAD_N = 0; $('hdrBtn').classList.remove('hidden');
+  FIND_PRE = String(pre || '');
   $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
     <div class="card"><h2>📷 사진부터 찍기</h2>
-      <p class="muted">송장(주소 라벨)과 상품이 함께 보이게 찍어주세요. AI가 <b>사서함 번호</b>·유통기한·개수를 읽어요.</p>
+      <p class="muted">${FIND_PRE ? '상품이 잘 보이게 찍어주세요. AI가 <b>상품명</b>을 읽어 비슷한 입고를 맨 위로 올리고, 유통기한·개수도 읽어요.' : '송장(주소 라벨)과 상품이 함께 보이게 찍어주세요. AI가 <b>사서함 번호</b>·유통기한·개수를 읽어요.'}</p>
       ${photoBlock()}</div><div id="findBox"></div>`;
-  CODE = '';
-  findPick();
+  CODE = FIND_PRE;
+  findPick(FIND_PRE);
   // 지난번 목록으로 바로 보여주고, 새 목록이 오면 지금 보던 사서함 그대로 다시 그린다
   loadAll().then(d => { if (d && d.ok && MODE === 'find' && $('findBox') && !($('fq') && $('fq').value)) findPick(CODE || (FIND && FIND.mb) || ''); }).catch(() => {});
 };
@@ -431,22 +481,22 @@ async function findRead() {
   h += aiHtml(d);
   LAST_AI = d;
   $('aiBox').innerHTML = h;
-  findPick(d.mb || (cands.length === 1 && cands[0].score >= 5 ? (cands[0].mb || cands[0].name) : ''));
+  findPick(d.mb || FIND_PRE || (cands.length === 1 && cands[0].score >= 5 ? (cands[0].mb || cands[0].name) : ''));
 }
 // 사서함 고르기: 읽은 코드가 있으면 그 학생 대기 입고를 바로, 없으면 대기 사서함 버튼 목록
 window.findPick = function (code) {
   const box = $('findBox'); if (!box) return;
   if (!ALL) { box.innerHTML = `<div class="muted">검수 대기 목록 불러오는 중…</div>`; loadAll().then(() => findPick(code)).catch(() => {}); return; }
   if (code) {
-    CODE = code; ITEMS = ALL.filter(it => matchQ(it, code));
+    CODE = code; ITEMS = prepItems(ALL.filter(it => matchQ(it, code)), (FIND && FIND.product) || '');
+    const kq = $('iq') ? $('iq').value : '';             // 다시 그려도 검색어 유지
     box.innerHTML = `<h2><span class="mb">${esc(code)}</span>${esc((ITEMS[0] && ITEMS[0].name) || (FIND && FIND.name) || '')} · 검수 대기 ${ITEMS.length}건</h2>` +
-      ITEMS.map((it, i) => `<div class="card item" onclick="openItem(${i})"><b>${esc(it.product)}${it.option ? ' · ' + esc(it.option) : ''}</b>
-        <span class="muted">등록 ${it.qty}개 · ${esc(String(it.at).slice(5, 16))}</span>
-        ${it.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고</div>` : ''}
-        ${it.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(it.dup)}</div>` : ''}</div>`).join('') +
+      (!FIND && ITEMS.length > 1 ? `<div class="muted" style="margin:4px 0">📷 위에서 상품 사진을 찍으면 AI가 비슷한 입고를 맨 위로 올려줘요</div>` : '') +
+      listHtml(ITEMS, {}) +
       (ITEMS.length ? '' : `<div class="card muted">이 사서함은 검수 대기 입고가 없어요. 수강생이 등록을 안 했다면 아래 버튼으로 사진을 보내주세요.</div>`) +
       `<button class="btn ghost" onclick="unregView()">📦 등록 안 된 물건 → 수강생에게 사진 보내기</button>
        <button class="btn ghost" onclick="findPick('')">↺ 다른 사서함 고르기</button>`;
+    if (kq && $('iq')) { $('iq').value = kq; filterItems(kq); }
     return;
   }
   box.innerHTML = `<div class="card"><label style="margin-top:0">사서함 직접 고르기</label>

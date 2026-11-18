@@ -2583,15 +2583,13 @@ function dealRuleHtml(d) {
       : `<li><b>한 번에 ${held}개</b> — 한 사람이 동시에 갖고 있을 수 있는 찜은 최대 ${held}개예요.</li>
     <li><b>하루 ${daily}개</b> — 하루(자정 기준)에 새로 찜할 수 있는 개수예요. 찜했다가 풀어도 1개로 세요.</li>
     <li><b>찜 기간 ${days}일</b> — ${days}일이 지나면 저절로 풀려서 다른 분이 찜할 수 있어요.</li>`}
-    <li><b>⭐ 초보 추천은 ${nb}개까지</b> — 찜 중 초보 추천 상품은 ${nb}개까지만 가질 수 있어요.</li>
-    <li class="dealRuleSub">⭐ 초보 추천 = 1건 마진 ${nbM.toLocaleString()}원 이상 + 네이버 판매처 ${nbS}곳 이상인 상품</li>
   </ul></details>`;
 }
-//  초보 추천·찜 한도는 두뇌가 정한다(사람마다 적립 설정이 달라 앱 계산이면 한도 판정이 어긋난다)
-function dealNewbie(it) { return !!(it && it.newbie); }
+//  ⭐ 초보 추천은 11-18 루크 지시로 없앰(PC와 같이) — 옛 두뇌가 newbie 를 보내도 화면엔 안 띄운다.
+function dealNewbie(it) { return false; }
 function dealQuotaText() {
   const q = DEALS.myQuota; if (!q) return '';
-  return `내 찜 <b>${q.held}/${q.heldMax}</b> · 오늘 새 찜 <b>${q.today}/${q.todayMax}</b> · ⭐ 초보 추천 <b>${q.newbie}/${q.newbieMax}</b>`;
+  return `내 찜 <b>${q.held}/${q.heldMax}</b> · 오늘 새 찜 <b>${q.today}/${q.todayMax}</b>`;
 }
 function dealClaimTags(it) {
   let b = '';
@@ -2617,7 +2615,7 @@ function dealClaimAlert(c) {
 }
 function dealMyClaimsHtml() {
   const my = DEALS.myClaims || [];
-  if (!my.length) return `<div class="empty">아직 찜한 상품이 없어요.<br>⭐ 초보 추천 상품부터 ① 확인 → ② 찜하기 → ③ 등록 순서로 해보세요.</div>`;
+  if (!my.length) return `<div class="empty">아직 찜한 상품이 없어요.<br>마음에 드는 상품을 ① 확인 → ② 찜하기 → ③ 등록 순서로 해보세요.</div>`;
   return my.map(c => {
     const al = dealClaimAlert(c), cur = dealFind(c.market, c.goodscode);
     return `<div class="card dealRow2${al ? ' dealAlertRow' : ''}" ${cur ? `onclick="openDealChoice('${esc(c.goodscode)}')"` : ''}>
@@ -2754,7 +2752,7 @@ function renderDeals() {
   h += dealPtBar();
   const nNew = plain.filter(dealNewbie).length, myN = (DEALS.myClaims || []).length;
   const myAlert = (DEALS.myClaims || []).filter(c => dealClaimAlert(c)).length;
-  h += `<div class="dealSteps">⭐ 처음이면 <b>초보 추천</b>부터 — 마진 남는 상품은 <b>🔒 찜한 분(선착순 ${dealClaimMax()}명)께만 상품명·링크가 열려요.</b> 누르면 <b>찜하기 → 확인 → 등록</b> 순서로 안내해요.</div>` + dealRuleHtml(DEALS);
+  h += `<div class="dealSteps">마진 남는 상품은 <b>🔒 찜한 분(선착순 ${dealClaimMax()}명)께만 상품명·링크가 열려요.</b> 누르면 <b>찜하기 → 확인 → 등록</b> 순서로 안내해요.</div>` + dealRuleHtml(DEALS);
   h += `<div class="chips" style="margin:10px 0">${chip('all', `전체 ${plain.length}`)}${nNew ? chip('newbie', `⭐ 초보 추천 ${nNew}`) : ''}${chip('mine', `🙋 내 찜 ${DEALS.myQuota ? `${DEALS.myQuota.held}/${DEALS.myQuota.heldMax}` : myN}${myAlert ? ` ⚠${myAlert}` : ''}`)}${chip('hot', `🔥 핫딜 ${nHot}`)}${nLow ? chip('low', `📉 최저가 ${nLow}`) : ''}${nWin ? chip('win', `💰 마진 ${nWin}`) : ''}${bundles.length ? chip('bundle', `📦 모음전 ${bundles.length}`) : ''}</div>`;
   // 카테고리 필터 — 있는 것만(개수와 함께)
   const CAT_ORDER = ['뷰티', '건강식품', '식품', '생활', '기타'];
@@ -2776,7 +2774,7 @@ function renderDeals() {
   if (DEALS.filter === 'mine') {
     const q = DEALS.myQuota;
     h += (q ? `<div class="dealQuota">${dealQuotaText()}</div>` : '')
-      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${dealHoldText(q)} 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 ${(q ? q.days : 1) <= 1 ? `매일 ${q ? q.todayMax : 3}개` : `한 번에 ${q ? q.heldMax : 3}개 · 하루 ${q ? q.todayMax : 3}개`} · 초보 추천 ${q ? q.newbieMax : 2}개까지 찜할 수 있어요.</p>`
+      + `<p class="muted" style="margin:2px 0 8px;font-size:12px">찜한 상품은 ${dealHoldText(q)} 내 자리로 잡혀 있어요. 마진이 바뀌면 ⚠ 표시가 떠요.<br>모두에게 공평하도록 ${(q ? q.days : 1) <= 1 ? `매일 ${q ? q.todayMax : 3}개` : `한 번에 ${q ? q.heldMax : 3}개 · 하루 ${q ? q.todayMax : 3}개`} 찜할 수 있어요.</p>`
       + `<button class="btn ghost" style="margin:0 0 8px;padding:8px" onclick="viewDealHistory()">📜 지난 찜 기록 전체 보기</button>` + dealMyClaimsHtml();   // 11-05
     $('pane').innerHTML = h; refreshPushBtn(); return;
   }

@@ -247,7 +247,8 @@ window.openCode = async function (q) {
   }
   ITEMS = prepItems(ITEMS, '');
   const who = ITEMS[0] ? `<span class="mb">${esc(ITEMS[0].mb || '')}</span>${esc(ITEMS[0].name)}` : esc(q);
-  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button><h2>${who} · 검수 대기 ${ITEMS.length}건</h2>` +
+  $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
+    <button class="btn pink" style="margin:0 0 10px" onclick="nextBox()">📷 다음 박스 찍기 (사서함 자동 찾기)</button><h2>${who} · 검수 대기 ${ITEMS.length}건</h2>` +
     (ITEMS.length > 1 ? `<button class="btn pink" style="margin:4px 0" onclick="findView('${esc(ITEMS[0].mb || q)}')">📷 상품 사진 찍으면 AI가 비슷한 입고를 맨 위로</button>` : '') +
     (ITEMS.length ? listHtml(ITEMS, { who: 1, memo: 1 })
       : `<div class="card muted">'${esc(q)}' 검수 대기 입고가 없어요.</div>`) +
@@ -285,7 +286,9 @@ window.openItem = function (i) {
     </div>`;
   if (keep) {                                                // 📷 사진부터 찍은 경우: 사진·AI 값 이어받기
     $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
-    if (FIND) { aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
+    // ⚡ 11-18: 사서함 찾기는 빠른 AI(lite)라 유통기한·개수를 안 읽었다 → 상품을 고른 지금 정확한 AI로 바로 읽기
+    if (FIND && FIND.lite) { AIKIND = 'item'; AIREAD_N = 0; LAST_AI = null; aiNow(); }
+    else if (FIND) { aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
     else if (AIRUN) $('aiBox').innerHTML = `<div class="ai">🤖 사진 읽는 중… 끝나면 칸에 채워요</div>`;
     else aiNow();                                            // 아직 안 읽었으면 상품을 누른 지금 한 번에 읽기
   }
@@ -396,14 +399,17 @@ function aiReadBody(it) {
 //  카메라를 못 켜는 폰(권한 거부·옛 브라우저)은 예전 방식(기본 카메라)으로 자동으로 넘어간다.
 let CAM = null, CAM_N = 0, CAM_BUSY = false;
 window.camFallback = function () { const p = $('ph'); if (p) p.click(); };
-window.camOpen = async function () {
-  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return camFallback();
+window.camOpen = async function (auto) {
+  // auto = 화면이 열리면서 저절로 켜는 경우 — 실패해도 기본 카메라를 억지로 띄우지 않는다(버튼으로 다시 열면 됨)
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return auto ? undefined : camFallback();
   clearTimeout(DRAFT_T); draftNow();
   try {
     CAM = await navigator.mediaDevices.getUserMedia({ audio: false,
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
   } catch (e) {
-    CAM = null; toast('카메라를 켜지 못해서 기본 카메라로 열어요' + (e && e.name === 'NotAllowedError' ? ' (카메라 권한을 허용해 주세요)' : ''), 3000);
+    CAM = null;
+    if (auto) { toast('[📷 사진 찍기]를 눌러 카메라를 켜 주세요' + (e && e.name === 'NotAllowedError' ? ' (카메라 권한 허용 필요)' : ''), 3000); return; }
+    toast('카메라를 켜지 못해서 기본 카메라로 열어요' + (e && e.name === 'NotAllowedError' ? ' (카메라 권한을 허용해 주세요)' : ''), 3000);
     return camFallback();
   }
   try { const tr = CAM.getVideoTracks()[0], cap = tr.getCapabilities && tr.getCapabilities();
@@ -416,6 +422,8 @@ window.camClose = function () {
   $('cam').classList.add('hidden');
   try { if (CAM) CAM.getTracks().forEach(t => t.stop()); } catch (_) {}
   CAM = null; const v = $('camV'); if (v) v.srcObject = null;
+  // ⚡ 11-18: 다 찍고 [완료]를 누르면 3장·5초를 기다리지 않고 바로 AI가 읽기 시작
+  if (AI && PH.length && PH.length !== AIREAD_N && !AIRUN && $('aiBox')) aiNow();
 };
 window.camShot = async function () {
   if (!CAM || CAM_BUSY) return;
@@ -486,6 +494,7 @@ async function qAiFill(job) {
   const tags = [];
   if (d && d.ok) {
     if (d.expiry) { b.expiry = d.expiry; tags.push(d.expirySure ? '🤖 유통기한 AI 입력' : '⚠ 🤖 유통기한 AI 입력(확실치 않음 — 확인 필요)'); }
+    else if (d.dates === 0) tags.push('🤖 AI: 사진에 날짜 글자 없음(표시 없는 상품?)');
     else tags.push('⚠ 🤖 AI가 유통기한을 못 읽음 — 확인 필요');
     if (b.count == null && d.countSure && d.count != null) b.count = Number(d.count);
     if (d.sameProduct === false) tags.push('⚠ 🤖 AI: 등록 상품과 다른 물건 같음 — 확인 필요');
@@ -534,7 +543,9 @@ window.done = async function () {
     }
     $('exp').focus(); return;
   }
-  if (!$('exp').value.trim()) {
+  // ⚡ 11-18: AI가 사진에서 날짜 글자를 하나도 못 봤으면(dates=0) 확인창 없이 넘어간다 — 메모에 남겨 '오늘 검수 점검'에서는 계속 보이게
+  if (!$('exp').value.trim() && LAST_AI && !LAST_AI.expiry && LAST_AI.dates === 0) noExpTag = '🤖 AI: 사진에 날짜 글자 없음(표시 없는 상품?)';
+  else if (!$('exp').value.trim()) {
     if (!confirm('유통기한이 비어 있어요.\n\n이 상품에 유통기한 표시가 아예 없나요? (가전·칫솔·화장솜 등)\n[확인] = 표시 없음으로 완료\n[취소] = 돌아가서 유통기한 넣기')) { $('exp').focus(); return; }
     noExpTag = '유통기한 표시 없음';
   }
@@ -556,8 +567,11 @@ window.done = async function () {
 // ── 📷 사진부터 찍기 (11-09 루크) — 사진을 먼저 넣으면 AI가 송장·주소의 사서함 코드를 읽어 그 학생 입고를 띄운다.
 //    못 읽거나 틀리면 아래 사서함 버튼에서 직접 고른다.
 let FIND_PRE = '';   // 사서함 목록에서 [📷 상품 사진…]으로 왔으면 그 사서함(송장이 안 찍혀도 이 학생 목록에서 추천)
-window.findView = function (pre) {
+// ⚡ 11-18: 검수 끝나고 다음 박스로 — 사진부터 찍기 화면 + 카메라까지 한 번에
+window.nextBox = function () { findView(); };
+window.findView = function (pre, noCam) {
   MODE = 'find'; PH = []; FIND = null; CUR = null; aiCancel(); AIKIND = 'find'; AIREAD_N = 0; $('hdrBtn').classList.remove('hidden');
+  if (!noCam) setTimeout(() => { if (MODE === 'find' && !PH.length) camOpen(true); }, 0);   // 화면 열리면 카메라 바로(탭 한 번 줄임)
   FIND_PRE = String(pre || '');
   $('main').innerHTML = `<button class="back" onclick="home()">← 사서함 목록</button>
     <div class="card"><h2>📷 사진부터 찍기</h2>
@@ -579,7 +593,14 @@ async function findRead() {
   FIND = d;
   FIND.noMb = !!(d.labelSeen && !d.mbRaw);            // 송장은 보이는데 사서함 번호가 안 적힘 → 검수 후 수강생에게 안내
   if (MODE !== 'find') {                                // 읽는 사이 상품(또는 미등록)을 먼저 눌렀으면 → 그 화면 칸에 바로 채움
-    NOMB = FIND.noMb; aiFill(d);
+    NOMB = FIND.noMb;
+    if (d.lite) {                                       // ⚡ 빠른 AI는 유통기한을 안 읽음 → 이 읽기가 끝나자마자 정확한 AI로 읽기
+      if ($('uProd') && d.product && !$('uProd').value) $('uProd').value = d.product;
+      if (CUR || $('uBtn')) setTimeout(() => { AIKIND = 'item'; AIREAD_N = 0; aiNow(); }, 0);
+      if (FIND.noMb && $('aiBox')) $('aiBox').innerHTML = `<div class="warn">📮 AI가 송장에서 사서함 번호를 못 찾았어요 — 검수 완료 때 한 번 더 물어봐요(정말 없을 때만 수강생에게 안내).</div>`;
+      return;
+    }
+    aiFill(d);
     $('aiBox').innerHTML = (FIND.noMb ? `<div class="warn">📮 AI가 송장에서 사서함 번호를 못 찾았어요 — 검수 완료 때 한 번 더 물어봐요(정말 없을 때만 수강생에게 안내).</div>` : '') + aiHtml(d);
     if ($('uProd') && d.product && !$('uProd').value) $('uProd').value = d.product;
     return;
@@ -593,8 +614,8 @@ async function findRead() {
       ${cands.map(c => `<button type="button" class="btn ghost" style="margin-top:6px" onclick="findPick('${esc(c.mb || c.name)}')"><span class="mb">${esc(c.mb || '번호없음')}</span>${esc(c.name)} <span class="muted">(${esc(c.why)})</span></button>`).join('')}
       ${FIND.noMb ? '<br><span class="muted">검수 완료 때 "정말 번호가 없나요?" 한 번 더 물어봐요 — [확인]일 때만 수강생에게 안내가 가요.</span>' : ''}</div>`;
   }
-  h += aiHtml(d);
-  LAST_AI = d;
+  h += d.lite ? `<div class="muted" style="margin-top:6px">유통기한·개수는 아래에서 상품을 누르면 바로 읽어요.</div>` : aiHtml(d);
+  LAST_AI = d.lite ? null : d;
   $('aiBox').innerHTML = h;
   findPick(d.mb || FIND_PRE || (cands.length === 1 && cands[0].score >= 5 ? (cands[0].mb || cands[0].name) : ''));
 }
@@ -639,7 +660,11 @@ window.unregView = function () {
   if (keep) {
     $('thumbs').innerHTML = PH.map(p => `<img src="${p.ai}">`).join('');
     $('thumbs').innerHTML = PH.map(p => `<img src="${p.big}">`).join('');
-    if (FIND) { if (FIND.product) $('uProd').value = FIND.product; aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
+    if (FIND) {
+      if (FIND.product) $('uProd').value = FIND.product;
+      if (FIND.lite) { AIKIND = 'item'; AIREAD_N = 0; LAST_AI = null; aiNow(); }   // ⚡ 빠른 AI는 유통기한 안 읽음 → 지금 읽기
+      else { aiFill(FIND); $('aiBox').innerHTML = aiHtml(FIND); }
+    }
     else if (AIRUN) $('aiBox').innerHTML = `<div class="ai">🤖 사진 읽는 중… 끝나면 칸에 채워요</div>`;
     else aiNow();
   }
@@ -700,7 +725,7 @@ async function boot() {
   const d = await kvGet('draft');
   if (!PIN || !d || !d.ph || !d.ph.length || Date.now() - d.t > 6 * 3600e3) return home();
   try {
-    if (d.view === 'find') findView();
+    if (d.view === 'find') findView('', true);             // 되살릴 땐 카메라 자동으로 안 켬(사진은 아래에서 복원)
     else {
       if (!ALL) { try { await loadAll(); } catch (_) {} }
       await openCode(d.code || '');

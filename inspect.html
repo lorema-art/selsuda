@@ -38,6 +38,18 @@
   .chk { display:flex; gap:8px; align-items:flex-start; margin-top:8px; font-size:14px; } .chk input { width:auto; margin-top:4px; }
   h2 { font-size:16px; margin:4px 0 10px; }
   .back { background:none; border:0; color:var(--pri); font:inherit; padding:0 0 10px; }
+  /* 📷 화면 안 카메라(11-18) */
+  .cam { position:fixed; inset:0; background:#000; z-index:30; display:flex; flex-direction:column; }
+  .cam video { flex:1; width:100%; min-height:0; object-fit:contain; background:#000; }
+  .camThumbs { display:flex; gap:6px; padding:6px 10px; overflow-x:auto; min-height:58px; background:#111; }
+  .camThumbs img { width:48px; height:48px; object-fit:cover; border-radius:6px; border:1px solid #444; }
+  .camBar { display:flex; align-items:center; justify-content:space-between; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); background:#111; gap:10px; }
+  .camBar button { border:0; border-radius:10px; padding:12px 14px; font:inherit; font-size:15px; background:#333; color:#fff; min-width:84px; }
+  .camBar button.ok { background:#2f9e44; }
+  .camBar .shutter { width:74px; height:74px; min-width:74px; border-radius:50%; background:#fff; border:5px solid #888; padding:0; }
+  .camBar .shutter:active { background:#ddd; }
+  .camFlash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:31; transition:opacity .15s; }
+  .camAlt { color:#bbb; background:none; border:0; font-size:13px; padding:6px; text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -45,6 +57,17 @@
 <div id="qbar" class="qbar hidden"></div>
 <main id="main"></main>
 <div id="toast" class="toast hidden"></div>
+<div id="cam" class="cam hidden">
+  <video id="camV" playsinline autoplay muted></video>
+  <div class="camThumbs" id="camThumbs"></div>
+  <div class="camBar">
+    <button type="button" onclick="camClose()">닫기</button>
+    <button type="button" class="shutter" id="camShot" onclick="camShot()" aria-label="찍기"></button>
+    <button type="button" class="ok" onclick="camClose()">완료 <span id="camN">0</span>장</button>
+  </div>
+  <div style="text-align:center;background:#111;padding-bottom:8px"><button type="button" class="camAlt" onclick="camClose(); camFallback()">휴대폰 기본 카메라로 찍기</button></div>
+</div>
+<div id="camFlash" class="camFlash"></div>
 <script src="config.js"></script>
 <script>
 'use strict';
@@ -134,9 +157,15 @@ function keepPartial(it, n) {
 function dropItem(it) { if (ALL && it) { ALL = ALL.filter(x => x.row !== it.row); GROUPS = groupsOf(ALL); store.set('insp_all', JSON.stringify({ t: Date.now(), items: ALL, ai: AI })); } }
 function toast(t, ms) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), ms || 2500); }
 async function call(action, extra) {
+  const t0 = Date.now();
   const res = await fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ action, pin: PIN }, extra || {})) });
   const d = await res.json();
   if (d && d.badPin) { store.set('insp_pin', ''); PIN = ''; }
+  // ⏱ 11-18: AI 읽기를 폰에서 기다린 시간(사진 올리기 포함)을 두뇌 'AI사용기록'에 따로 적는다 — 기다리지 않고 뒤에서
+  if (action === 'inspRead' && d && d.logId) {
+    const ms = Date.now() - t0;
+    fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'inspTiming', pin: PIN, id: d.logId, ms }) }).catch(() => {});
+  }
   return d;
 }
 // 사진 줄이기 — 저장용 1600px, AI용 1280px (JPEG)
@@ -229,7 +258,7 @@ window.openCode = async function (q) {
 function photoBlock() {
   return `<label>사진 (수량·유통기한이 보이게)</label>
     <input id="ph" type="file" accept="image/*" capture="environment" multiple class="hidden" onchange="addPhotos(this.files)">
-    <button type="button" class="btn ghost" style="margin-top:0" onclick="$('ph').click()">📷 사진 찍기 / 추가</button>
+    <button type="button" class="btn ghost" style="margin-top:0" onclick="camOpen()">📷 사진 찍기 / 추가</button>
     <div class="thumbs" id="thumbs"></div><div id="aiBox"></div>`;
 }
 window.openItem = function (i) {
@@ -354,13 +383,68 @@ window.addPhotos = async function (files) {
   aiSchedule();
   clearTimeout(DRAFT_T); draftNow();   // 찍자마자 폰에 보관
 };
+// ⏩ 11-18 루크 "유통기한 읽을 때까지 기다리지 말고 저장 먼저": 읽는 중에 [검수 완료]를 누르면
+//   이 읽기(AI_P)를 그 저장 건이 넘겨받아 뒤에서 끝나는 대로 유통기한을 채워 저장한다(같은 사진을 두 번 읽지 않음).
+let AI_P = null, AI_P_FOR = null;
+function aiReadBody(it) {
+  return { images: PH.slice(0, AI_MAX_PH).map(p => p.ai), product: it ? it.product : ($('uProd') || {}).value, option: it ? it.option : '', qty: it ? it.qty : Number(($('uQty') || {}).value || 0) };
+}
+// 📷 화면 안 카메라(11-18 루크 "사진 찍을 때 사진이 안 들어가고 새로고침처럼 될 때가 있다")
+//  휴대폰 기본 카메라 앱으로 넘어가면, 그 사이 메모리가 모자랄 때 폰이 이 검수 페이지를 꺼버린다
+//  → 돌아오면 페이지가 처음부터 다시 열리고 방금 찍은 사진은 사라진다(임시보관으로 이전 사진만 되살아남).
+//  → 카메라를 이 페이지 '안'에서 직접 켜서 찍는다. 다른 앱으로 안 넘어가니 페이지가 꺼질 일이 없다.
+//  카메라를 못 켜는 폰(권한 거부·옛 브라우저)은 예전 방식(기본 카메라)으로 자동으로 넘어간다.
+let CAM = null, CAM_N = 0, CAM_BUSY = false;
+window.camFallback = function () { const p = $('ph'); if (p) p.click(); };
+window.camOpen = async function () {
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return camFallback();
+  clearTimeout(DRAFT_T); draftNow();
+  try {
+    CAM = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
+  } catch (e) {
+    CAM = null; toast('카메라를 켜지 못해서 기본 카메라로 열어요' + (e && e.name === 'NotAllowedError' ? ' (카메라 권한을 허용해 주세요)' : ''), 3000);
+    return camFallback();
+  }
+  try { const tr = CAM.getVideoTracks()[0], cap = tr.getCapabilities && tr.getCapabilities();
+        if (cap && cap.focusMode && cap.focusMode.indexOf('continuous') >= 0) await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (_) {}
+  CAM_N = 0; $('camN').textContent = '0'; $('camThumbs').innerHTML = '';
+  const v = $('camV'); v.srcObject = CAM; $('cam').classList.remove('hidden');
+  try { await v.play(); } catch (_) {}
+};
+window.camClose = function () {
+  $('cam').classList.add('hidden');
+  try { if (CAM) CAM.getTracks().forEach(t => t.stop()); } catch (_) {}
+  CAM = null; const v = $('camV'); if (v) v.srcObject = null;
+};
+window.camShot = async function () {
+  if (!CAM || CAM_BUSY) return;
+  CAM_BUSY = true; const fl = $('camFlash'); fl.style.opacity = '0.8'; setTimeout(() => { fl.style.opacity = '0'; }, 120);
+  try {
+    let blob = null; const tr = CAM.getVideoTracks()[0];
+    // 고해상도 사진(안드로이드 크롬) — 안 되면 화면 영상에서 한 장 떠낸다(아이폰 등)
+    if (window.ImageCapture && tr) { try { blob = await new ImageCapture(tr).takePhoto(); } catch (_) { blob = null; } }
+    if (!blob) {
+      const v = $('camV'), c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
+      blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.92));
+    }
+    if (!blob) throw new Error('사진을 못 찍었어요');
+    await addPhotos([blob]);
+    CAM_N++; $('camN').textContent = String(CAM_N);
+    const last = PH[PH.length - 1]; if (last) $('camThumbs').insertAdjacentHTML('beforeend', `<img src="${last.big}">`);
+  } catch (e) { toast((e && e.message) || '사진을 못 찍었어요'); }
+  finally { CAM_BUSY = false; }
+};
 async function itemRead() {
   if (!$('aiBox')) return;
-  $('aiBox').innerHTML = `<div class="ai">🤖 사진 ${Math.min(PH.length, AI_MAX_PH)}장에서 유통기한·개수 읽는 중…</div>`;
+  const me = CUR;
+  $('aiBox').innerHTML = `<div class="ai">🤖 사진 ${Math.min(PH.length, AI_MAX_PH)}장에서 유통기한·개수 읽는 중… <span class="muted">(기다리지 않고 [검수 완료]를 눌러도 돼요 — 뒤에서 채워 저장해요)</span></div>`;
   let d;
-  try { d = await call('inspRead', { images: PH.slice(0, AI_MAX_PH).map(p => p.ai), product: CUR ? CUR.product : ($('uProd') || {}).value, option: CUR ? CUR.option : '', qty: CUR ? CUR.qty : Number(($('uQty') || {}).value || 0) }); }
-  catch (e) { if ($('aiBox')) $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 넣어주세요.</div>`; return; }
-  if (!$('aiBox')) return;                                   // 그사이 다른 화면으로 감
+  try { AI_P_FOR = me; AI_P = call('inspRead', aiReadBody(me)); d = await AI_P; }
+  catch (e) { if ($('aiBox') && CUR === me) $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 넣어주세요.</div>`; return; }
+  finally { if (AI_P_FOR === me) { AI_P = null; AI_P_FOR = null; } }
+  if (!$('aiBox') || CUR !== me) return;                     // 그사이 다른 화면(다른 상품)으로 감 — 엉뚱한 상품 칸에 채우지 않게
   if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 넣어주세요.</div>`; return; }
   aiFill(d);
   $('aiBox').innerHTML = aiHtml(d)
@@ -382,6 +466,7 @@ async function qRun() {
   try {
     for (;;) {
       const job = Q.find(x => !x.err); if (!job) break;
+      if (job.body.aiLater) { await qAiFill(job); qSave(); }
       let d;
       try { d = await call('inspDone', job.body); } catch (e) { d = { ok: false, error: '연결 오류' }; }
       if (d.ok || /이미 검수된/.test(d.error || '')) { Q = Q.filter(x => x !== job); qSave(); toast('저장됨 ✅ ' + job.label + (d.photos ? ` (사진 ${d.photos}장)` : '')); }
@@ -389,6 +474,24 @@ async function qRun() {
       qBar();
     }
   } finally { Q_RUN = false; qBar(); }
+}
+// ⏩ 'AI 나중에' 저장 건: AI가 읽은 유통기한(·비어 있던 개수)을 채운다. 확실하지 않거나 못 읽으면
+//   검수메모에 '⚠ …확인 필요'를 남긴다(⚠ 가 있으면 두뇌가 메모 칸을 주황으로 칠함 → 시트에서 눈에 띔).
+async function qAiFill(job) {
+  const b = job.body, ask = b.aiLater; let d = null;
+  for (let k = 0; k < 2 && !(d && d.ok); k++) {
+    try { d = job._p ? await job._p : await call('inspRead', ask); } catch (e) { d = { ok: false }; }
+    job._p = null;
+  }
+  const tags = [];
+  if (d && d.ok) {
+    if (d.expiry) { b.expiry = d.expiry; tags.push(d.expirySure ? '🤖 유통기한 AI 입력' : '⚠ 🤖 유통기한 AI 입력(확실치 않음 — 확인 필요)'); }
+    else tags.push('⚠ 🤖 AI가 유통기한을 못 읽음 — 확인 필요');
+    if (b.count == null && d.countSure && d.count != null) b.count = Number(d.count);
+    if (d.sameProduct === false) tags.push('⚠ 🤖 AI: 등록 상품과 다른 물건 같음 — 확인 필요');
+  } else tags.push('⚠ 🤖 AI 읽기 실패 — 유통기한 확인 필요');
+  b.note = [b.note, ...tags].filter(Boolean).join(' / ');
+  delete b.aiLater;
 }
 window.qRetry = function () { Q.forEach(x => { x.err = ''; }); qBar(); qRun(); };
 window.addEventListener('beforeunload', e => { if (Q.length) { e.preventDefault(); e.returnValue = ''; } });
@@ -401,12 +504,24 @@ window.done = async function () {
   const it = CUR; if (!it) return;
   aiCancel();
   if (!PH.length && !confirm('사진 없이 검수 완료할까요?')) return;
-  if (AI && PH.length && (!$('exp').value.trim() || $('cnt').value === '') && (AIRUN || PH.length !== AIREAD_N)) {
-    DONE_BUSY = true; const b = $('doneBtn'); if (b) { b.disabled = true; b.textContent = '🤖 AI가 읽는 중… 잠시만요'; }
-    try { if (!AIRUN) await aiNow(); for (let k = 0; AIRUN && k < 120; k++) await sleep(250); }
-    finally { DONE_BUSY = false; if (b) { b.disabled = false; b.textContent = '✅ 검수 완료'; } }
-    if (CUR !== it || !$('exp')) return;                   // 그사이 다른 화면으로 감
-    toast('🤖 AI가 읽었어요 — 값을 눈으로 확인하고 다시 [검수 완료]를 눌러주세요', 3500); return;
+  // ⏩ 11-18: AI가 아직 안 읽었으면(읽는 중 포함) 기다리지 않는다 — 저장 건에 'AI 나중에'를 달아 뒤에서 읽고 채워 저장.
+  //   (예전: AI 끝날 때까지 버튼이 막혀 있었음)
+  if (AI && PH.length && !$('exp').value.trim() && (AIRUN || PH.length !== AIREAD_N)) {
+    const c0 = $('cnt').value, nomb0 = noMbOk();
+    const qm0 = (document.querySelector('input[name="qm"]:checked') || {}).value || '';
+    const part0 = qm0 === 'part' && c0 !== '' && Number(c0) > 0 && Number(c0) < it.qty;
+    const job = { row: it.row, label: (it.mb ? it.mb + ' ' : '') + it.product + (part0 ? ` (일부 ${c0}개)` : '') + ' 🤖', err: '',
+      body: { row: it.row, at: it.at, product: it.product, dup: it.dup || '', noMbNotice: nomb0, expiry: '', count: c0 === '' ? null : Number(c0),
+              fixQty: qm0 === 'fix', partial: part0, note: $('note').value.trim(), photos: PH.map(p => p.big),
+              aiLater: aiReadBody(it) } };
+    // 지금 읽는 중이면 그 결과를 그대로 넘겨받고(다시 안 읽음), 아직 안 읽었으면 바로 읽기 시작(앞 저장 건을 기다리지 않게)
+    job._p = (AIRUN && AI_P && AI_P_FOR === it) ? AI_P : call('inspRead', job.body.aiLater);
+    job._p.catch(() => {});
+    aiCancel(); AIRUN = false;
+    Q.push(job); qSave(); qBar(); qRun();
+    if (part0) { keepPartial(it, Number(c0)); PH = []; toast(`일부 검수 ✅ ${c0}개 — 유통기한은 AI가 읽는 대로 채워 저장해요`, 3500); }
+    else { dropItem(it); PH = []; toast('검수 완료 ✅ 유통기한은 AI가 읽는 대로 채워 저장해요', 3000); }
+    draftSave(); openCode(CODE); return;
   }
   // 11-09 점검: 하루 105줄 중 68줄이 유통기한 빈칸(가전·칫솔 같은 '원래 없는 것'과 '깜빡한 것'이 섞여 구분 불가) →
   //  빈칸이면 꼭 한 번 묻고, '표시 없음'을 고르면 메모에 남겨 점검 목록에서 빠지게 한다.

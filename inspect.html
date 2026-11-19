@@ -183,6 +183,20 @@ function shrink(file, max, q) {
   });
 }
 
+// 이미 줄인 사진(dataURL)을 한 번 더 작게 — 사서함 찾기용(11-19)
+function shrinkUrl(u, max, q) {
+  return new Promise((ok, no) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); ok(c.toDataURL('image/jpeg', q || 0.8));
+    };
+    img.onerror = () => no(new Error('사진 줄이기 실패'));
+    img.src = u;
+  });
+}
+
 // ── 비밀번호 ──
 function pinView(msg) {
   $('hdrBtn').classList.add('hidden');
@@ -586,7 +600,10 @@ async function findRead() {
   if (!$('aiBox')) return;
   $('aiBox').innerHTML = `<div class="ai">🤖 사진 ${Math.min(PH.length, AI_MAX_PH)}장에서 사서함 번호·유통기한 읽는 중…</div>`;
   let d;
-  try { d = await call('inspRead', { find: 1, images: PH.slice(0, AI_MAX_PH).map(p => p.ai) }); }
+  // ⚡ 11-19: 사서함 찾기는 송장의 큰 글자만 읽으면 돼서 작은 사진(1024px)으로 보낸다 → 올리는 시간 단축.
+  //   (유통기한 읽기는 작은 날짜 글자 때문에 지금처럼 큰 사진 그대로)
+  try { const imgs = await Promise.all(PH.slice(0, AI_MAX_PH).map(p => shrinkUrl(p.big, 1024, 0.8).catch(() => p.ai)));
+        d = await call('inspRead', { find: 1, images: imgs }); }
   catch (e) { if ($('aiBox')) $('aiBox').innerHTML = `<div class="warn">AI 읽기 연결 오류 — 직접 골라·넣어주세요.</div>`; return; }
   if (!$('aiBox')) return;
   if (!d.ok) { $('aiBox').innerHTML = `<div class="warn">${esc(d.error || 'AI 읽기 실패')} — 직접 골라·넣어주세요.</div>`; return; }

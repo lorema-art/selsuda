@@ -2507,6 +2507,14 @@ window.pushTurnOnFromAsk = async function () {
 window.setDealFilter = function (f) { DEALS.filter = f; renderDeals(); };
 window.openDeal = function (u) { if (u) window.open(u, '_blank', 'noopener'); };
 // 행을 누르면 어디로 갈지 고른다 — 오픈마켓 / 네이버 카탈로그 (루크 요청)
+// 🔍 11-20: AI가 '같은 제품인지 애매'로 본 상품 → 처음 열 때 한 번 확인 안내(PC와 같은 문구)
+const _dealJudgeSeen = new Set();
+function dealJudgeAlert(it) {
+  const w = String((it && it.judgeWarn) || '').trim(); if (!w) return;
+  const k = String(it.goodscode) + '|' + w; if (_dealJudgeSeen.has(k)) return; _dealJudgeSeen.add(k);
+  alert('🔍 같은 제품인지 꼭 확인해 주세요\n\n이 상품은 판매처 상품과 네이버 카탈로그가 같은 제품인지 AI가 확신하지 못했어요.\n\n확인할 점: ' + w
+    + '\n\n① 확인에서 판매처 화면과 네이버 가격비교 화면을 열어 크기·용량·모델이 같은지 비교한 뒤 진행해 주세요.');
+}
 window.openDealChoice = function (code) {
   const it = (DEALS.items || []).find(x => String(x.goodscode) === String(code));
   if (!it) return;
@@ -2514,6 +2522,7 @@ window.openDealChoice = function (code) {
   // 재렌더 없이 해당 행만 '봤음'으로(스크롤 유지) → 어디까지 봤는지 표시
   try { const el = document.querySelector('.dealRow2[data-code="' + code + '"]'); if (el) el.classList.add('viewed'); } catch (_) {}
   const nv = String(it.naverUrl || '').trim();
+  dealJudgeAlert(it);                                    // 🔍 같은 제품인지 애매한 상품 → 먼저 안내 팝업(11-20, PC와 같이)
   if (it.locked) { openDealLocked(it); return; }
   if (!nv) { window.openDeal(it.url); return; }
   // ① 확인 → ② 찜하기 → ③ 등록 (PC와 같은 순서) — 찜한 뒤엔 세 가지 확인이 ③ 링크 복사를 연다
@@ -2537,6 +2546,7 @@ window.openDealChoice = function (code) {
       ${m !== null ? `<br><b style="color:${m > 0 ? '#1e7a46' : '#c0392b'}">예상 마진 ${(m > 0 ? '+' : '') + m.toLocaleString()}원</b>` : ''}${dealNewbie(it) ? ' <span class="tagNewbie">⭐ 초보 추천</span>' : ''}</p>
     ${how ? `<div class="muted" style="font-size:12.5px;line-height:1.7;margin:-4px 0 10px;padding:8px 10px;background:#f4f8ff;border-radius:8px">📦 ${how.txt}</div>` : ''}
     ${al ? `<div class="dealClaimAlert" style="margin-bottom:10px">⚠ ${esc(al)}</div>` : ''}
+    ${it.judgeWarn ? `<div class="dealClaimAlert" style="margin-bottom:10px">🔍 <b>같은 제품인지 꼭 확인하세요</b> — ${esc(it.judgeWarn)}</div>` : ''}
     <div class="dealStep"><div class="dealStepT">① 확인</div>
       <button class="btn ghost" style="padding:8px" onclick="openDeal('${esc(it.url)}')">🛒 ${esc(it.market || '오픈마켓')}에서 보기</button>
       <button class="btn ghost" style="margin-top:6px;padding:8px" onclick="openDeal('${esc(nv)}')">🟢 네이버 가격비교 보기</button></div>
@@ -2594,6 +2604,7 @@ function dealQuotaText() {
 function dealClaimTags(it) {
   let b = '';
   if (dealNewbie(it)) b += `<span class="tagNewbie">⭐ 초보 추천</span>`;
+  if (it.judgeWarn) b += `<span class="tagClaim">🔍 동일제품 확인</span>`;
   if (it.claimed) b += `<span class="tagMine">🙋 내가 찜</span>`;
   else if (Number(it.claimCnt) > 0) b += `<span class="tagClaim">🙋 ${Number(it.claimCnt)}/${dealClaimMax()}명</span>`;
   return b;

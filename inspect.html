@@ -285,12 +285,13 @@ window.openItem = function (i) {
       ${CUR.memo ? `<div class="muted">📝 ${esc(CUR.memo)}</div>` : ''}
       ${CUR.ret ? `<div class="warn" style="background:#e3f2fd;color:#0d47a1">↩ 반품 회수 입고 — 고객에게서 돌아온 물건이에요. 상태(개봉·파손·구성품)를 확인하고 사진을 남겨 주세요</div>` : ''}
       ${CUR.dup ? `<div class="warn">⚠ 같은 상품 입고가 또 있어요: ${esc(CUR.dup)}</div>` : ''}
+      ${CUR.issued ? `<div class="warn">⚠ 반품 권장 안내를 이미 보낸 상품이에요 — 검수 완료(검수날짜)는 안 찍혀요.<br>수강생이 그대로 쓰기로 했다면 재고내역 메모의 '⚠ 검수 안내 보냄' 부분을 지운 뒤 검수해 주세요.</div>` : ''}
       ${photoBlock()}
       <label>유통기한</label><input id="exp" placeholder="예: 2027-05-31 (AI가 사진에서 읽어 채워요)" value="${esc(CUR.exp || '')}">
       <label>실제 개수</label><input id="cnt" type="number" inputmode="numeric" value="${CUR.qty}" oninput="qtyCheck()">
       <div id="qtyBox"></div>
       <label>메모 (선택)</label><input id="note" placeholder="파손·포장상태 등">
-      <button class="btn ok" id="doneBtn" onclick="done()">✅ 검수 완료</button>
+      <button class="btn ok" id="doneBtn" onclick="done()"${CUR.issued ? ' disabled style="opacity:.4"' : ''}>✅ 검수 완료${CUR.issued ? ' (안내 보낸 상품)' : ''}</button>
     </div>
     <div class="card"><b>⚠ 문제가 있어요 — 수강생에게 반품 권장 안내 보내기</b>
       <p class="muted" style="margin:6px 0">위에서 찍은 사진이 함께 가요. 이 입고는 검수 처리하지 않고 목록에 남아요(시트에 빨갛게 표시).</p>
@@ -325,7 +326,7 @@ window.issueSend = async function (kind) {
   finally { ISSUE_BUSY = false; }
   if (d && d.badPin) return pinView(d.error);
   if (!d || !d.ok) { toast('⚠ 못 보냈어요: ' + ((d && d.error) || '오류'), 4000); return; }
-  it.memo = (it.memo ? it.memo + ' / ' : '') + '⚠ 반품 권장 안내 보냄';
+  it.memo = (it.memo ? it.memo + ' / ' : '') + '⚠ 반품 권장 안내 보냄'; it.issued = true;
   PH = []; draftSave(); toast(`✅ ${d.name || ''} 님에게 안내 보냈어요 (사진 ${d.photos}장)`, 3500);
   openCode(CODE);
 };
@@ -492,6 +493,7 @@ async function qRun() {
       let d;
       try { d = await call('inspDone', job.body); } catch (e) { d = { ok: false, error: '연결 오류' }; }
       if (d.ok || /이미 검수된/.test(d.error || '')) { Q = Q.filter(x => x !== job); qSave(); toast('저장됨 ✅ ' + job.label + (d.photos ? ` (사진 ${d.photos}장)` : '')); }
+      else if (d.issueSent) { Q = Q.filter(x => x !== job); qSave(); toast('⚠ ' + job.label + ' — 반품 권장 안내를 보낸 상품이라 검수 완료 안 함', 5000); }
       else { job.err = d.error || '저장 실패'; if (d.badPin) { qBar(); return pinView(d.error); } }
       qBar();
     }

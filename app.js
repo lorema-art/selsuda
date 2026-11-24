@@ -1677,7 +1677,7 @@ function paneInv() {
           ${it.site ? (siteUrlOf(it.site)
             ? `<div class="invSite"><a href="#" data-site="${esc(it.site)}" onclick="openBuySite(this.dataset.site);return false;">🔗 ${esc(it.site)}</a></div>`
             : `<div class="invSite">🔗 ${esc(it.site)}</div>`) : ''}${it.expiry ? `<div class="muted" style="font-size:11.5px">📅 유통기한 ${esc(it.expiry)}</div>` : ''}
-          ${send > 0 ? `<div style="margin-top:4px"><button class="btn mini ghost" onclick="srOpen(${DL.inv.indexOf(it)})">↩️ 구매처 반품</button></div>` : ''}</td>
+          ${retCanOf(it) > 0 ? `<div style="margin-top:4px"><button class="btn mini ghost" onclick="srOpen(${DL.inv.indexOf(it)})">↩️ 구매처 반품</button></div>` : ''}</td>
           <td class="n ${send <= 0 ? 'zero' : ''}">${send}${Number(it.reserved) > 0 ? `<div class="rsv">대기 ${it.reserved}</div>` : ''}${Number(it.retHold) > 0 ? `<div class="rsv">반품대기 ${it.retHold}</div>` : ''}${Number(it.pending) > 0 ? `<div class="pend">검수대기 ${it.pending}</div>` : ''}</td></tr>`;
       }).join('') + `<tr id="invNone1" style="display:none"><td colspan="2" class="muted">검색과 일치하는 재고가 없어요.</td></tr>`
       + `</tbody></table></div>`
@@ -1945,9 +1945,11 @@ window.dlReturnCancel = async function (at) {
 };
 
 // ↩️ 구매처 반품(재고 → 구매처로 돌려보내기) — PC와 같은 두뇌·규칙
+// 반품 가능 = 두뇌 5.03+ retCan(검수된 재고 + 반품 권장 안내 보낸 검수 전 물건)
+function retCanOf(it) { return it.retCan != null ? Math.max(0, Number(it.retCan) || 0) : Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0)); }
 window.srOpen = function (idx) {
   const it = (DL.inv || [])[idx]; if (!it) return;
-  const can = Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0));
+  const can = retCanOf(it);
   window._srIt = it;
   sheet(`<h3>↩️ 구매처 반품</h3>
     <p class="muted" style="font-size:12.5px">창고의 내 재고를 구매처로 돌려보내요. 구매처에 반품 신청은 <b>직접</b> 먼저 해주세요.</p>
@@ -1969,7 +1971,7 @@ window.srOpen = function (idx) {
 };
 window.srSend = async function () {
   const it = window._srIt; if (!it) return;
-  const can = Math.max(0, (Number(it.qty) || 0) - (Number(it.pending) || 0));
+  const can = retCanOf(it);
   const v = (id) => String(($(id) || {}).value || '').trim();
   const qty = Number(v('srQtyM')) || 0, to = v('srToM'), method = v('srMethodM') || 'pickup';
   if (qty < 1 || qty > can) { alert(`반품 수량은 1~${can}개로 적어주세요.`); return; }

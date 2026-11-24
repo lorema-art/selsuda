@@ -246,7 +246,7 @@ async function viewHome() {
       <button onclick="go('deals')"><i>🏷️</i>오늘의 할인</button>
       <button onclick="go('margin')"><i>💰</i>마진 계산기</button>
       <button onclick="openRecharge()"><i>💳</i>선불 충전</button>
-    </div><button class="navEditLink" onclick="mNavEdit()">✏️ 메뉴 편집</button><div id="mMbBanner"></div><div id="mGbBanner"></div>`;
+    </div><button class="navEditLink guideLink" onclick="mGuide()">📖 사용법</button><button class="navEditLink" onclick="mNavEdit()">✏️ 메뉴 편집</button><div id="mMbBanner"></div><div id="mGbBanner"></div>`;
   if (notice.length) {
     h += `<div class="sec">📢 공지사항</div>`;
     h += notice.map(n => `<div class="card"><b>${esc(n.title || '')}</b><div class="noticeBox" style="margin-top:8px">${nl2br(n.body || '')}</div></div>`).join('');
@@ -273,6 +273,7 @@ async function viewHome() {
   loadFaqM();
   homeGbBanner();   // 🤝 자리 남은 공동구매 공지(화면은 먼저 그리고 뒤에 채움)
   homeMbBanner();   // 📮 내 사서함번호 공지(10-15)
+  mGuideFirst();    // 📖 처음 한 번 사용법(11-24)
 }
 // ── 🏢 온라인 사무실 (11-02 루크) ─────────────────────
 //  강사가 메인시트 '온라인사무실' 탭에 넣은 줌 회의. 열려 있으면 입장 팝업(회의마다 하루 한 번) — PC와 같은 규칙.
@@ -3104,6 +3105,73 @@ window.mNavEditSave = function () {
   const hid = [...document.querySelectorAll('.navEditList input[data-q]')].filter(c => !c.checked).map(c => c.dataset.q);
   store.set(quickKeyM(), hid); closeSheet(true); applyQuickHideM();
 };
+
+// ── 📖 사용법 가이드 (11-24 루크: 자동 CS처럼, PC와 같은 내용) — 제목 눌러 펼치기, 처음 한 번 저절로 ──
+window.mGuide = function () {
+  const sec = (t, body, open) => `<details class="guide"${open ? ' open' : ''}><summary>${t}</summary><div class="gbody">${body}</div></details>`;
+  const go2 = (v, label) => `<button class="guideGo" onclick="closeSheet(true);go('${v}')">${label} 열기 →</button>`;
+  sheet(`<h3>📖 셀러들의수다 사용 가이드</h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 6px">궁금한 제목을 눌러 펼쳐 보세요. 홈 화면 <b>📖 사용법</b>으로 언제든 다시 볼 수 있어요.</p>
+    ${sec('① 셀러들의수다는 무엇을 하나요?', `
+      스마트스토어 셀러가 <b>배우고 → 소싱하고 → 물건을 맡기고 보내는</b> 일을 한곳에서 하게 해 줘요.
+      <ul><li>🎓 질문하기 · 1:1 컨설팅 · 온라인 사무실</li>
+      <li>🔎 오늘의 할인 · 가격추이 · 소싱주의 · 주소지 확인 · 마진 계산기</li>
+      <li>📦 사무실에 물건을 맡기면 검수·보관하고, 주문이 오면 대신 발송해 드려요.</li></ul>
+      <div class="tip">💡 상품등록·학습관처럼 직접 작업하는 기능은 PC 프로그램에 있어요. 아이디는 같아요.</div>`, true)}
+    ${sec('② 처음 한 번만 하는 준비', `
+      <ol><li><b>📮 내 사서함번호 확인</b> — 홈에 떠 있어요. 사무실로 물건을 주문할 때 <b>배송지 주소 맨 뒤에 꼭</b> 적어 주세요.</li>
+      <li><b>💳 선불 충전</b> — 택배비 등은 잔액에서 빠져요.</li>
+      <li><b>🔔 알림 켜기</b> — 발송·물류 메시지·핫딜·공동구매 소식을 폰으로 받아요.</li>
+      <li><b>[홈 화면에 추가]</b> — 앱처럼 바로 열 수 있어요.</li>
+      <li>(선택) <b>✏️ 메뉴 편집</b> — 안 쓰는 버튼은 숨기세요.</li></ol>`)}
+    ${sec('③ 📦 물건 맡기기 — 재고관리', `
+      <ol><li>구매처에서 살 때 배송지를 <b>사무실 주소 + 내 사서함번호</b>로 적어요.</li>
+      <li><b>재고관리 → 입고 등록</b>으로 무엇을 몇 개 보냈는지 알려 주세요.</li>
+      <li>도착하면 물류담당자가 <b>검수</b>하고 내 재고에 올려요.</li>
+      <li>물건에 문제가 있으면 <b>사진과 안내</b>가 와요. 필요하면 <b>↩️ 구매처 반품</b>을 하세요.</li></ol>
+      ${go2('inv', '📦 재고관리')}`)}
+    ${sec('④ 🚚 고객에게 보내기 — 배송요청 · 반품', `
+      <ol><li>주문이 오면 <b>배송요청</b>에 상품과 받는 분 주소를 넣어요.</li>
+      <li>물류담당자가 발송하면 <b>운송장 번호</b>가 생겨요.</li>
+      <li>택배비는 잔액에서 자동으로 빠져요. <b>같은 분에게 한 번에 보내면 택배비는 한 번만</b>.</li></ol>
+      <b>고객이 반품하면</b> 배송요청의 <b>↩️ 반품 접수</b>로 알려 주세요. 도착하면 재고로 돌아가요(반품 배송비 차감). 상품 상태에 문제가 있으면 사진과 안내를 보내 드려요 → <b>📮 물류 문의</b>로 처리 방법을 알려 주세요.
+      <br>${go2('ship', '🚚 배송요청')}`)}
+    ${sec('⑤ 💳 선불잔액 · 충전', `
+      <ul><li>빠지는 것: <b>택배비 · 반품 배송비 · 구매대행 · 공동구매 · 주소지 AI 확인</b></li>
+      <li>홈의 <b>💳 선불 충전</b> → 결제하면 잠시 뒤 <b>자동으로</b> 잔액에 들어와요.</li>
+      <li>잔액이 모자라면 안내가 떠요. 충전하면 바로 풀려요.</li></ul>`)}
+    ${sec('⑥ 🛒 구매대행 · 🤝 공동구매 · 💸 매입요청', `
+      <ul><li><b>🛒 구매대행</b> — 카드가 없거나 구하기 어려운 상품을 코치가 대신 사 드려요. (수수료 구매가의 2%)</li>
+      <li><b>🤝 공동구매</b> — 강사님이 소싱한 상품을 <b>선착순</b>으로 나눠요. 신청하면 바로 잔액에서 빠지고 내 재고로 들어와요.</li>
+      <li><b>💸 매입요청</b> — <b>2주 넘게 출고가 없는 재고</b>를 강사님께 사 달라고 요청해요. 제안가를 <b>수락</b>하면 잔액으로 충전돼요.</li></ul>
+      ${go2('buy', '🛒 구매대행')} ${go2('gb', '🤝 공동구매')} ${go2('br', '💸 매입요청')}`)}
+    ${sec('⑦ 🔎 소싱 도구', `
+      <ul><li><b>🏷️ 오늘의 할인</b> — 오픈마켓 할인 상품을 <b>마진과 함께</b> 보여 줘요. 찜은 하루 3개.</li>
+      <li><b>📈 가격추이</b> — 네이버 최저가 흐름(최대 6개월), <b>목표가</b> 아래로 떨어지면 알림.</li>
+      <li><b>🚫 소싱주의</b> — 위수탁 신고가 들어오는 브랜드·제품. <b>위탁 소싱 전에 꼭 검색</b>!</li>
+      <li><b>🏠 주소지 확인</b> — 받는 주소가 사무실·매장인지 확인(무료 + 로드뷰). AI 확인은 잔액에서 실제 비용만큼 빠져요.</li>
+      <li><b>💰 마진 계산기</b> — 실제 남는 돈 계산.</li></ul>
+      ${go2('deals', '🏷️ 오늘의 할인')} ${go2('pt', '📈 가격추이')} ${go2('warn', '🚫 소싱주의')}`)}
+    ${sec('⑧ 💬 묻고 배우기', `
+      <ul><li><b>💬 질문하기</b> — 사진을 붙여 질문하세요. AI가 먼저 답할 수 있고, 애매한 건 선생님이 직접 답해요.</li>
+      <li><b>❓ 자주 묻는 질문</b> · <b>💎 컨설팅 신청</b> · <b>🏢 온라인 사무실</b></li>
+      <li>홈 아래쪽 <b>📺 라이브 방송표</b>와 <b>📢 공지사항</b>도 확인하세요.</li>
+      <li><b>💡 건의사항</b> — 바라는 점을 남기고 공감·댓글을 달아요.</li></ul>
+      ${go2('ask', '💬 질문하기')}`)}
+    ${sec('⑨ 문제가 생겼을 때', `
+      <ul><li>화면이 이상하면 아래로 당겨 <b>새로고침</b>하거나 앱을 껐다 켜 주세요.</li>
+      <li>처음 열 때는 몇 초 걸릴 수 있어요.</li>
+      <li>배송·재고 문제는 <b>📮 물류 문의</b>, 그 밖의 건 <b>💬 질문하기</b>로!</li></ul>`)}
+    <div class="row"><button class="btn" onclick="closeSheet(true)">닫기</button></div>`);
+};
+function mGuideFirst() {
+  const key = 'guideSeen_' + ((session && session.userId) || '');
+  if (store.get(key, '')) return;
+  setTimeout(() => {
+    const sh = $('sheet'); if (sh && !sh.classList.contains('hidden')) return;   // 사서함 안내 등 다른 팝업이 먼저면 다음에
+    store.set(key, '1'); mGuide();
+  }, 5000);
+}
 
 // ── ❓ 자주 묻는 질문 (11-04) — 강사가 공개 체크한 것만. 하나도 없으면 홈 버튼이 안 보임 ──
 let FAQ = [], FAQ_ON = false;

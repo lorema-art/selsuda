@@ -277,22 +277,51 @@ window.returnsFilter = function (q) {
       <button class="btn pink" style="margin:8px 0 0" id="ra${i}" onclick="returnArrive(${i})">📦 도착 확인</button></div>`).join('')
     : `<div class="card muted">${n ? '찾는 반품이 없어요.' : '도착을 기다리는 고객반품이 없어요 🎉'}</div>`;
 };
-window.returnArrive = async function (i) {
+// 📷 반품 도착 화면(11-24 루크): 사진 찍기 → 문제 없으면 사진만 보관, 제품에 문제 있으면 수강생에게 사진+안내 보내기
+let RPH = [], RCUR = -1, RBUSY = false;
+window.returnArrive = function (i) {
   const x = RETS[i]; if (!x) return;
-  if (!confirm(`${x.mb ? x.mb + ' ' : ''}${x.name} 님 반품이 도착했나요?
-
-${x.product}${x.option ? ' · ' + x.option : ''} × ${x.qty}개
-
-[확인]을 누르면 회수완료로 처리돼요
-(반품배송비 차감 · 재고 복구 → 검수 대기)`)) return;
-  const b = $('ra' + i); if (b) { b.disabled = true; b.textContent = '처리 중…'; }
-  let d; try { d = await call('inspReturnArrived', { row: x.row, id: x.id }); } catch (e) { d = { ok: false, error: '연결 오류예요. 목록을 새로 고친 뒤 확인해주세요.' }; }
-  if (!d.ok) { alert(d.error || '처리하지 못했어요.'); if (b) { b.disabled = false; b.textContent = '📦 도착 확인'; } return; }
-  toast('↩ 도착 확인 — ' + (d.result || '처리됨').replace(/^✅\s*/, '').slice(0, 60), 4000);
-  RETS.splice(i, 1); returnsFilter(($('rq') || {}).value || '');
+  RCUR = i; RPH = [];
+  $('main').innerHTML = `<button class="back" onclick="returnsView(($('rq0')||{}).value)">← 반품 목록</button>
+    <div class="card"><span class="mb">${esc(x.mb || '번호없음')}</span>${esc(x.name)}<br>
+      <b>${esc(x.product)}</b>${x.option ? ' · ' + esc(x.option) : ''} · ${x.qty}개<br>
+      <span class="muted">${x.inv ? '반품송장 ' + esc(x.inv) : '반품송장 없음'}${x.reason ? ' · 반품사유: ' + esc(x.reason) : ''}</span></div>
+    <div class="card"><label style="margin-top:0">📷 반품 상품 사진 (상태가 보이게 — 개봉·파손·구성품)</label>
+      <input id="rph" type="file" accept="image/*" capture="environment" multiple class="hidden" onchange="retAddPhotos(this.files)">
+      <button type="button" class="btn ghost" style="margin-top:0" onclick="$('rph').click()">📷 사진 찍기 / 추가</button>
+      <div class="thumbs" id="rthumbs"></div>
+      <label>문제 내용 (문제 있을 때 · 수강생에게 같이 보내져요)</label>
+      <textarea id="rissue" rows="2" placeholder="예) 박스 개봉됨, 본품 찌그러짐, 구성품(설명서) 없음"></textarea></div>
+    <button class="btn" id="rbOk" onclick="returnDone(false)">✅ 문제 없음 — 도착 확인 (사진은 보관만)</button>
+    <button class="btn pink" id="rbBad" onclick="returnDone(true)">⚠ 제품에 문제 있음 — 수강생에게 사진 보내고 도착 확인</button>
+    <p class="muted">도착 확인을 누르면 회수완료로 처리돼요(반품배송비 차감 · 재고 복구 → 검수 대기). 문제 있음으로 보내면 그 물건은 검수 완료가 막히고, 수강생이 구매처 반품을 할 수 있어요.</p>`;
+};
+window.retAddPhotos = async function (files) {
+  const list = Array.from(files || []); if (!list.length) return;
+  for (const f of list) { try { RPH.push(await shrink(f, 1280)); } catch (e) { toast(e.message); } }
+  const t = $('rthumbs'); if (t) t.innerHTML = RPH.map(u => `<img src="${u}">`).join('');
+  const el = $('rph'); if (el) el.value = '';
+};
+window.returnDone = async function (send) {
+  const x = RETS[RCUR]; if (!x || RBUSY) return;
+  const issue = (($('rissue') || {}).value || '').trim();
+  if (send && !RPH.length) { toast('수강생에게 보낼 사진을 먼저 찍어주세요', 3000); return; }
+  if (send && !issue && !confirm('문제 내용을 안 적었어요. 사진만 보낼까요?')) return;
+  const msg = send
+    ? `${x.name} 님에게 사진 ${RPH.length}장과 "반품 상품 상태 안내"를 보내고 도착 확인할까요?`
+    : `${x.name} 님 반품 도착 확인할까요?` + (RPH.length ? ` (사진 ${RPH.length}장은 보관만 하고 안 보내요)` : '');
+  if (!confirm(msg)) return;
+  RBUSY = true; ['rbOk', 'rbBad'].forEach(id => { const b = $(id); if (b) b.disabled = true; }); toast('처리 중…', 10000);
+  let d; try { d = await call('inspReturnArrived', { row: x.row, id: x.id, photos: RPH, send, issue }); } catch (e) { d = { ok: false, error: '연결 오류예요. 반품 목록을 새로 고친 뒤 처리됐는지 확인해주세요.' }; }
+  finally { RBUSY = false; }
+  if (d && d.badPin) return pinView(d.error);
+  if (!d || !d.ok) { alert((d && d.error) || '처리하지 못했어요.'); ['rbOk', 'rbBad'].forEach(id => { const b = $(id); if (b) b.disabled = false; }); return; }
+  toast(d.sent ? `✅ 도착 확인 · ${d.name || ''} 님에게 사진 ${d.photos}장 보냈어요` : '✅ 도착 확인 — ' + (d.result || '처리됨').replace(/^✅\s*/, '').slice(0, 50), 4500);
+  RETS.splice(RCUR, 1); RCUR = -1; RPH = [];
   ALL = null; try { await loadAll(); } catch (_) {}            // 복구된 물건이 검수 대기에 바로 뜨게
   const code = d.mb || x.mb;
-  if (code && MODE === 'returns' && confirm('이 반품 물건을 지금 검수할까요?')) { MODE = ''; openCode(code); }
+  if (!d.sent && code && MODE === 'returns' && confirm('이 반품 물건을 지금 검수할까요?')) { MODE = ''; openCode(code); return; }
+  returnsView();
 };
 window.openCode = async function (q) {
   q = String(q || '').trim(); if (!q) return;

@@ -216,7 +216,8 @@ window.home = async function () {
     <div class="row"><input id="q" placeholder="예: B009, 가050, 김효현" autocapitalize="characters" onkeydown="if(event.key==='Enter')openCode(this.value)"><button class="btn" style="flex:0 0 76px;margin:0" onclick="openCode($('q').value)">찾기</button></div>
     <p class="muted" style="margin:8px 0 0">택배 운송장 상품명 앞 [코드]를 넣으세요.</p>
     <button class="btn pink" onclick="findView()">📷 사진부터 찍기 (사서함 자동 찾기)</button>
-    <button class="btn ghost" onclick="reportView()">📋 오늘 검수 점검 (빠진 것 찾기)</button></div>
+    <button class="btn ghost" onclick="reportView()">📋 오늘 검수 점검 (빠진 것 찾기)</button>
+    <button class="btn ghost" onclick="returnsView()">↩ 돌아오는 고객반품 (도착 확인)</button></div>
     <div id="grp"><div class="muted">검수 대기 목록 불러오는 중…</div></div>`;
   const draw = (fresh) => {
     const g = $('grp'); if (!g || MODE || CODE) return;          // 다른 화면으로 갔으면 안 그림
@@ -248,6 +249,50 @@ window.reportView = async function (day) {
     + sec('④ 미등록으로 보냈는데 학생이 아직 등록 안 함', d.unreg.filter(u => !u.registered), u => `<div class="card" style="padding:8px 10px;margin:6px 0">${esc(u.at)} · ${esc(u.who)}<br><b>${esc(u.product)}</b>${u.qty ? ' · ' + u.qty + '개' : ''}<br><span class="muted">${u.seen ? '👀 ' + esc(u.seen) + ' 학생 확인' : '학생 아직 안 읽음'}${u.rem ? ' · 재알림 ' + esc(u.rem) : ''}</span></div>`)
     + sec('⑤ 등록 3일 넘었는데 검수 안 된 입고', d.stale, x => li(x, `등록 ${esc(x.at)} (${x.age}일)`), '없음 ✅')
     + (d.staleN > d.stale.length ? `<div class="muted">…외 ${d.staleN - d.stale.length}건 (시트 메뉴 '📋 오늘 검수 점검'에서 전체 보기)</div>` : '');
+};
+// ↩ 돌아오는 고객반품(11-24) — 반품 박스가 도착하면 [도착 확인] → 회수완료 처리(반품비 차감·재고 복구) → 검수 대기로
+let RETS = [];
+window.returnsView = async function (q) {
+  MODE = 'returns'; CODE = ''; CUR = null; PH = []; aiCancel(); $('hdrBtn').classList.remove('hidden');
+  const back = `<button class="back" onclick="home()">← 사서함 목록</button>`;
+  $('main').innerHTML = back + `<div class="muted">반품 목록 불러오는 중…</div>`;
+  let d; try { d = await call('inspReturns'); } catch (e) { if (MODE === 'returns') $('main').innerHTML = back + `<div class="warn">연결 오류예요.</div>`; return; }
+  if (MODE !== 'returns') return;
+  if (!d.ok) { $('main').innerHTML = back + `<div class="warn">${esc(d.error || '불러오기 실패')}${/inspReturns|unknown|알 수 없/i.test(d.error || '') ? ' — 배송 두뇌 새 버전 배포가 필요해요' : ''}</div>`; return; }
+  RETS = d.items || [];
+  $('main').innerHTML = back + `<div class="card"><h2 style="margin:0">↩ 돌아오는 고객반품 ${RETS.length}건</h2>
+      <div class="muted" style="margin-top:6px">반품 박스가 사무실에 도착하면 <b>[도착 확인]</b>을 누르세요. 반품배송비 차감·재고 복구가 되고, 그 물건은 바로 <b>검수 대기</b>에 떠요(상태 확인 후 검수 완료).</div>
+      <div class="row" style="margin-top:8px"><input id="rq" placeholder="반품송장 뒷자리 · 사서함 · 이름 · 상품" oninput="returnsFilter(this.value)"></div></div>
+    <div id="retList"></div>`;
+  returnsFilter(q || '');
+};
+window.returnsFilter = function (q) {
+  const el = $('retList'); if (!el) return;
+  const n = String(q || '').toUpperCase().replace(/[\s-]+/g, '');
+  const list = RETS.map((x, i) => ({ x, i })).filter(({ x }) => !n || (String(x.inv) + '|' + x.mb + '|' + x.name + '|' + x.product + '|' + x.option).toUpperCase().replace(/[\s-]+/g, '').indexOf(n) >= 0);
+  el.innerHTML = list.length ? list.map(({ x, i }) => `<div class="card" style="padding:10px;margin:6px 0">
+      <span class="mb">${esc(x.mb || '번호없음')}</span>${esc(x.name)} <span class="muted">· 접수 ${esc(String(x.at).slice(5, 16))}</span><br>
+      <b>${esc(x.product)}</b>${x.option ? ' · ' + esc(x.option) : ''} · ${x.qty}개<br>
+      <span class="muted">${x.inv ? '반품송장 ' + esc(x.inv) + (x.courier ? ' (' + esc(x.courier) + ')' : '') : '반품송장 아직 없음'}${x.reason ? ' · ' + esc(x.reason) : ''}</span>
+      <button class="btn pink" style="margin:8px 0 0" id="ra${i}" onclick="returnArrive(${i})">📦 도착 확인</button></div>`).join('')
+    : `<div class="card muted">${n ? '찾는 반품이 없어요.' : '도착을 기다리는 고객반품이 없어요 🎉'}</div>`;
+};
+window.returnArrive = async function (i) {
+  const x = RETS[i]; if (!x) return;
+  if (!confirm(`${x.mb ? x.mb + ' ' : ''}${x.name} 님 반품이 도착했나요?
+
+${x.product}${x.option ? ' · ' + x.option : ''} × ${x.qty}개
+
+[확인]을 누르면 회수완료로 처리돼요
+(반품배송비 차감 · 재고 복구 → 검수 대기)`)) return;
+  const b = $('ra' + i); if (b) { b.disabled = true; b.textContent = '처리 중…'; }
+  let d; try { d = await call('inspReturnArrived', { row: x.row, id: x.id }); } catch (e) { d = { ok: false, error: '연결 오류예요. 목록을 새로 고친 뒤 확인해주세요.' }; }
+  if (!d.ok) { alert(d.error || '처리하지 못했어요.'); if (b) { b.disabled = false; b.textContent = '📦 도착 확인'; } return; }
+  toast('↩ 도착 확인 — ' + (d.result || '처리됨').replace(/^✅\s*/, '').slice(0, 60), 4000);
+  RETS.splice(i, 1); returnsFilter(($('rq') || {}).value || '');
+  ALL = null; try { await loadAll(); } catch (_) {}            // 복구된 물건이 검수 대기에 바로 뜨게
+  const code = d.mb || x.mb;
+  if (code && MODE === 'returns' && confirm('이 반품 물건을 지금 검수할까요?')) { MODE = ''; openCode(code); }
 };
 window.openCode = async function (q) {
   q = String(q || '').trim(); if (!q) return;

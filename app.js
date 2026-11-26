@@ -88,7 +88,7 @@ const coApi = (a, e) => {
   if (!url) return Promise.reject(new Error('NO_COACHING'));
   return call(url, a, e);
 };
-const dlApi = (a, e) => call(BRAIN.deliveryUrl, a, e);
+const dlApi = (a, e) => call(BRAIN.deliveryUrl, a, e).then(d => { if (d && d.suspended) { try { showSuspendLock(d.suspend); } catch (_) {} } return d; });   // 🚫 서버가 이용정지로 막으면 잠금
 
 // ── 저장 ─────────────────────────────────────────────
 const store = {
@@ -2991,7 +2991,69 @@ async function checkNegativeBalance() {
   let b = null;
   try { b = await dlApi('getBalance'); } catch (_) { return; }
   if (!b || !b.ok) return;
+  startSuspendWatch();
+  if (b.suspend) { showSuspendLock(b.suspend); return; }   // 🚫 이용정지가 미수금 안내보다 먼저
   if (Number(b.balance || 0) < 0) showRechargeLock(b.balance);
+}
+// ── 🚫 이용정지(11-26 루크) — 택배 시트 [이용정지] 탭에 오른 수강생은 입금 전까지 앱 전체가 잠긴다 ──
+//  잠긴 동안 2분마다·앱으로 돌아올 때마다 다시 확인 → 입금 반영되면 저절로 풀림. 평소엔 10분마다.
+var _suspendTimer = null, _suspendLocked = false;
+function startSuspendWatch() {
+  if (_suspendTimer) return;
+  const tick = async () => { try { await checkSuspendNow(false); } catch (_) {} _suspendTimer = setTimeout(tick, _suspendLocked ? 120000 : 600000); };
+  _suspendTimer = setTimeout(tick, _suspendLocked ? 120000 : 600000);
+  if (!window._suspendVis) { window._suspendVis = true; document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkSuspendNow(false); }); }
+}
+async function checkSuspendNow(manual) {
+  if (!session || !session.userId || !BRAIN || !BRAIN.deliveryUrl) return;
+  let d = null;
+  try { d = await call(BRAIN.deliveryUrl, 'getBalance'); } catch (_) { if (manual) toast('연결이 잠시 안 돼요. 조금 뒤에 다시 눌러 주세요.'); return; }
+  if (!d || !d.ok) return;
+  if (d.suspend) { showSuspendLock(d.suspend); if (manual) toast('아직 입금이 반영되지 않았어요. 반영되면 자동으로 풀려요.'); }
+  else if (_suspendLocked) { _suspendLocked = false; const el = $('suspendLock'); if (el) el.remove(); toast('✅ 이용정지가 풀렸어요!'); }
+}
+window.suspendRecheck = () => checkSuspendNow(true);
+// 📷 입금내역 캡쳐를 올리면 바로 풀린다(11-26 루크). 사진은 강사가 나중에 확인.
+window.suspendSendProof = async (inp) => {
+  const f = inp && inp.files && inp.files[0]; if (!f) return;
+  const msg = $('suspendMsg');
+  try {
+    if (msg) msg.textContent = '사진 올리는 중…';
+    const photo = await shrinkImage(f);
+    const d = await call(BRAIN.deliveryUrl, 'suspendProof', { photo });
+    if (d && d.ok) {
+      _suspendLocked = false; const el = $('suspendLock'); if (el) el.remove();
+      toast('✅ 입금내역을 받았어요. 바로 이용하실 수 있어요!');
+    } else if (msg) msg.textContent = (d && d.error) || '올리지 못했어요. 다시 해 주세요.';
+  } catch (e) { if (msg) msg.textContent = '올리지 못했어요: ' + ((e && e.message) || e); }
+  finally { try { inp.value = ''; } catch (_) {} }
+};
+function showSuspendLock(sp) {
+  sp = sp || {};
+  _suspendLocked = true;
+  closeRechargeLock();
+  let d = $('suspendLock');
+  if (!d) { d = document.createElement('div'); d.id = 'suspendLock'; d.className = 'lockWrap'; d.style.zIndex = '2147483000'; document.body.appendChild(d); }
+  const bal = Number(sp.balance || 0);
+  const balTxt = (bal < 0 ? '-' : '') + Math.abs(bal).toLocaleString() + '원';
+  const need = (sp.need === null || sp.need === undefined) ? null : Number(sp.need);
+  const owe = (need !== null && need > bal) ? (need - bal) : 0;
+  d.innerHTML = `<div class="lockCard">
+      <div style="font-size:44px;line-height:1">🚫</div>
+      <h3 style="margin:10px 0 6px">이용이 잠시 멈췄어요</h3>
+      <div style="display:inline-block;margin:0 0 8px;padding:5px 12px;border-radius:999px;background:#ffe3e3;color:#c62828;font-weight:700;font-size:13.5px">${esc(sp.reason || '택배비 미납')}</div>
+      <p class="muted" style="line-height:1.75;margin:0 0 8px">
+        지금 선불잔액 <b style="color:#e0457e;font-size:17px">${balTxt}</b>${owe ? `<br><b>${owe.toLocaleString()}원 이상</b> 입금(충전)하시면 자동으로 다시 열려요.` : '<br>담당 강사님 확인 후 다시 열려요.'}</p>
+      <p class="muted" style="font-size:12px;line-height:1.7;margin:0 0 14px">
+        ⚠️ 결제할 때 반드시 <b>앱 로그인 전화번호</b>로 해 주세요.<br>입금이 반영되면 이 화면은 저절로 사라져요.</p>
+      ${BRAIN.rechargeUrl ? '<button class="btn" onclick="openRecharge()">💳 충전하기</button>' : ''}
+      <button class="btn" style="margin-top:8px;background:#2e7d32" onclick="$('suspendPhoto').click()">📷 입금내역 캡쳐 올리고 바로 풀기</button>
+      <input type="file" id="suspendPhoto" accept="image/*" style="display:none" onchange="suspendSendProof(this)">
+      <div id="suspendMsg" class="muted" style="font-size:12.5px;min-height:16px;margin-top:6px"></div>
+      <button class="btn ghost" style="margin-top:8px" onclick="suspendRecheck()">🔄 입금했어요 — 다시 확인</button>
+    </div>`;
+  if (_suspendTimer) { clearTimeout(_suspendTimer); _suspendTimer = null; }
+  startSuspendWatch();
 }
 
 // ── 시작 ─────────────────────────────────────────────
